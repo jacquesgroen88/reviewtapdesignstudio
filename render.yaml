@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: reviewtap-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 4000
+      - key: FRONTEND_URL
+        sync: false       # set in Render dashboard: your Netlify URL
+      - key: REMOVE_BG_API_KEY
+        sync: false       # optional
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false       # for Drive upload
+      - key: GOOGLE_DRIVE_FOLDER_ID
+        sync: false
+    disk:
+      name: data
+      mountPath: /opt/render/project/src/backend/data
+      sizeGB: 1           # SQLite database lives here, persists across deploys

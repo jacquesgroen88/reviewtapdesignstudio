@@ -1,0 +1,27 @@
+[build]
+  base    = "frontend"
+  command = "npm run build"
+  publish = "frontend/dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Proxy /api/* and /r/* to the backend (Render or wherever it's hosted)
+# Set VITE_BACKEND_URL in Netlify environment variables
+[[redirects]]
+  from   = "/api/*"
+  to     = ":VITE_BACKEND_URL/api/:splat"
+  status = 200
+  force  = true
+
+[[redirects]]
+  from   = "/r/*"
+  to     = ":VITE_BACKEND_URL/r/:splat"
+  status = 302
+  force  = true
+
+# SPA fallback — all other routes serve index.html
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200

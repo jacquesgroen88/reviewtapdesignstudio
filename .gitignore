@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+
+# Build output
+frontend/dist/
+frontend/.vite/
+
+# Environment (NEVER commit secrets)
+.env
+backend/.env
+.env.local
+.env.*.local
+
+# Database (contains live data — back up separately)
+backend/data/
+*.db
+*.db-shm
+*.db-wal
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/settings.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# Plan files (internal)
+.claude/plans/

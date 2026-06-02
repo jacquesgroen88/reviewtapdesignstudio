@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1489" height="2315" viewBox="0 0 1489 2315">
+  <!-- Stand background -->
+  <rect width="1489" height="2315" fill="#1a1a2e"/>
+  <!-- Top panel area -->
+  <rect x="35" y="35" width="1419" height="1656" rx="12" fill="#16213e" stroke="#0d3b66" stroke-width="3"/>
+  <!-- ReviewTap logo placeholder -->
+  <circle cx="744" cy="600" r="180" fill="#14b893" opacity="0.15"/>
+  <circle cx="744" cy="600" r="120" fill="#14b893" opacity="0.3"/>
+  <text x="744" y="620" text-anchor="middle" fill="#14b893" font-family="Inter,sans-serif" font-size="56" font-weight="700">ReviewTap</text>
+  <!-- QR code placeholder -->
+  <rect x="572" y="850" width="300" height="300" rx="16" fill="white" opacity="0.9"/>
+  <rect x="594" y="872" width="256" height="256" rx="8" fill="#1a1a2e"/>
+  <text x="722" y="1008" text-anchor="middle" fill="white" font-family="Inter,sans-serif" font-size="32">QR</text>
+  <!-- Tagline -->
+  <text x="744" y="1250" text-anchor="middle" fill="white" font-family="Inter,sans-serif" font-size="40" opacity="0.7">Scan to leave a review</text>
+  <!-- Base fold line -->
+  <line x1="35" y1="1691" x2="1454" y2="1691" stroke="#0d3b66" stroke-width="4" stroke-dasharray="20,12"/>
+  <!-- Base area -->
+  <rect x="35" y="1691" width="1419" height="589" rx="12" fill="#0d3b66" opacity="0.6"/>
+  <text x="744" y="2010" text-anchor="middle" fill="white" font-family="Inter,sans-serif" font-size="36" opacity="0.5">Base</text>
+  <!-- Border decoration -->
+  <rect x="35" y="35" width="1419" height="2245" rx="12" fill="none" stroke="#14b893" stroke-width="3" opacity="0.4"/>
+</svg>

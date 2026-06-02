@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1081" height="709" viewBox="0 0 1081 709">
+  <!-- Card background with rounded corners -->
+  <rect width="1081" height="709" fill="#1a1a2e"/>
+  <rect x="35" y="35" width="1011" height="639" rx="32" fill="#16213e" stroke="#0d3b66" stroke-width="3"/>
+  <!-- Left side brand bar -->
+  <rect x="35" y="35" width="220" height="639" rx="32" fill="#14b893" opacity="0.15"/>
+  <!-- ReviewTap wordmark -->
+  <text x="145" y="390" text-anchor="middle" fill="#14b893" font-family="Inter,sans-serif" font-size="28" font-weight="700" transform="rotate(-90,145,390)">ReviewTap</text>
+  <!-- Main content area -->
+  <rect x="300" y="80" width="400" height="400" rx="16" fill="white" opacity="0.05"/>
+  <!-- QR code placeholder -->
+  <rect x="660" y="100" width="330" height="330" rx="16" fill="white" opacity="0.9"/>
+  <rect x="682" y="122" width="286" height="286" rx="8" fill="#1a1a2e"/>
+  <text x="825" y="272" text-anchor="middle" fill="white" font-family="Inter,sans-serif" font-size="36">QR</text>
+  <!-- Tagline -->
+  <text x="540" y="580" text-anchor="middle" fill="white" font-family="Inter,sans-serif" font-size="30" opacity="0.5">Tap or scan to review</text>
+  <!-- Border -->
+  <rect x="35" y="35" width="1011" height="639" rx="32" fill="none" stroke="#14b893" stroke-width="2.5" opacity="0.3"/>
+</svg>
