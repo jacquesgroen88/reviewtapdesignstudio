@@ -26,6 +26,14 @@ export function getDb() {
       created_at  TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS order_status (
+      row_slug    TEXT PRIMARY KEY,   -- Formaloo row slug
+      status      TEXT NOT NULL DEFAULT 'pending',
+                                      -- pending | in_progress | done | skipped
+      note        TEXT,
+      updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `)
 
   return db
@@ -70,6 +78,27 @@ export function incrementScanCount(id) {
   getDb().prepare(`
     UPDATE qr_codes SET scan_count = scan_count + 1, updated_at = datetime('now') WHERE id = ?
   `).run(id)
+}
+
+// ── Order status operations ───────────────────────────────────────────────────
+
+export function getOrderStatus(rowSlug) {
+  return getDb().prepare('SELECT * FROM order_status WHERE row_slug = ?').get(rowSlug)
+}
+
+export function setOrderStatus(rowSlug, status, note = null) {
+  getDb().prepare(`
+    INSERT INTO order_status (row_slug, status, note, updated_at)
+    VALUES (@rowSlug, @status, @note, datetime('now'))
+    ON CONFLICT(row_slug) DO UPDATE SET
+      status     = @status,
+      note       = COALESCE(@note, note),
+      updated_at = datetime('now')
+  `).run({ rowSlug, status, note })
+}
+
+export function getAllOrderStatuses() {
+  return getDb().prepare('SELECT * FROM order_status').all()
 }
 
 export function bulkImport(entries) {

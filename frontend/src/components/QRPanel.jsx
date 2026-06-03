@@ -5,7 +5,7 @@ let qrIdCounter = 0
 
 const BASE_URL = import.meta.env.VITE_QR_BASE_URL || 'http://localhost:4000/r'
 
-export default function QRPanel({ onQRReady, variantId }) {
+export default function QRPanel({ onQRReady, variantId, prefillUrl }) {
   const isBlack = variantId === 'black'
 
   const [savedCodes,  setSavedCodes]  = useState([])
@@ -13,7 +13,7 @@ export default function QRPanel({ onQRReady, variantId }) {
   const [backendDown, setBackendDown] = useState(false)
 
   // Manual URL fallback (used when backend is down)
-  const [manualUrl,   setManualUrl]   = useState('')
+  const [manualUrl,   setManualUrl]   = useState(prefillUrl || '')
   const [fgColor,     setFgColor]     = useState(isBlack ? '#ffffff' : '#000000')
   const [bgColor,     setBgColor]     = useState(isBlack ? '#000000' : '#ffffff')
   const [ecLevel,     setEcLevel]     = useState('M')

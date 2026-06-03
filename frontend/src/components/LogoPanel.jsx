@@ -4,7 +4,7 @@ import QRPanel from './QRPanel.jsx'
 
 let logoIdCounter = 0
 
-export default function LogoPanel({ logos, onLogosChange, onLogoReady, onLogoRemove, variantId }) {
+export default function LogoPanel({ logos, onLogosChange, onLogoReady, onLogoRemove, variantId, prefillGoogleUrl }) {
   const [processingIds, setProcessingIds] = useState(new Set())
 
   const onDrop = useCallback(async (acceptedFiles) => {
@@ -164,7 +164,7 @@ export default function LogoPanel({ logos, onLogosChange, onLogoReady, onLogoRem
       )}
 
       {/* QR Panel */}
-      <QRPanel onQRReady={handleQRReady} variantId={variantId} />
+      <QRPanel onQRReady={handleQRReady} variantId={variantId} prefillUrl={prefillGoogleUrl} />
 
       {/* Tips */}
       <div className="bg-brand-50 rounded-xl p-3 space-y-1">

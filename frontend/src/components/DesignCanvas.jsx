@@ -9,13 +9,14 @@ const MIN_ZOOM = 0.4
 const MAX_ZOOM = 4.0
 const ZOOM_STEP = 0.25
 
-export default function DesignCanvas({ product, initialVariantId, jobName }) {
+export default function DesignCanvas({ product, initialVariantId, jobName, prefill }) {
   const canvasElRef  = useRef(null)
   const fabricRef    = useRef(null)
   const bgImageRef   = useRef(null)
   const isPanning    = useRef(false)
   const lastPanPoint = useRef(null)
-  const spaceRef     = useRef(false)   // true while Space is held
+  const spaceRef     = useRef(false)
+  const prefillDone  = useRef(false)
 
   const [variantId,   setVariantId]   = useState(initialVariantId || product.defaultVariant)
   const [ready,       setReady]       = useState(false)
@@ -142,6 +143,26 @@ export default function DesignCanvas({ product, initialVariantId, jobName }) {
       clear()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Auto-load logo + QR from Formaloo prefill ────────────────────────────
+  useEffect(() => {
+    if (!ready || !prefill || prefillDone.current) return
+    prefillDone.current = true
+
+    // Load logo from Formaloo S3 URL
+    if (prefill.logoUrl) {
+      const id  = 'prefill_logo'
+      const entry = {
+        id,
+        name:         `${prefill.companyName || 'Logo'}.png`,
+        originalSrc:  prefill.logoUrl,
+        processedSrc: prefill.logoUrl,
+        bgRemoved:    false,
+      }
+      setLogos([entry])
+      addToCanvas(entry)
+    }
+  }, [ready, prefill]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Swap template when variant changes ────────────────────────────────────
   useEffect(() => {
@@ -322,6 +343,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName }) {
           onLogoReady={handleLogoReady}
           onLogoRemove={handleLogoRemove}
           variantId={variantId}
+          prefillGoogleUrl={prefill?.googleReviewUrl}
         />
       </div>
 
