@@ -8,7 +8,7 @@ export function useHistory(fabricRef) {
 
   const snapshot = useCallback(() => {
     if (!fabricRef.current || paused.current) return
-    const json = fabricRef.current.toJSON(['id', 'selectable', 'evented', 'lockMovementX', 'lockMovementY', 'hasControls', 'hasBorders', 'isBackground', 'snapZoneId'])
+    const json = fabricRef.current.toJSON(['id', 'selectable', 'evented', 'lockMovementX', 'lockMovementY', 'hasControls', 'hasBorders', 'isBackground', 'isGuide', 'snapZoneId'])
     // Truncate forward history
     stack.current = stack.current.slice(0, cursor.current + 1)
     stack.current.push(JSON.stringify(json))

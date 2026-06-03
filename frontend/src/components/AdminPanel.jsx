@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import QRCode from 'qrcode'
 
-const BASE_URL = import.meta.env.VITE_QR_BASE_URL || 'http://localhost:4000/r'
+const BASE_URL = import.meta.env.VITE_QR_BASE_URL || `${window.location.origin}/r`
 
 export default function AdminPanel() {
   const [qrCodes,   setQrCodes]   = useState([])

@@ -9,7 +9,7 @@ const MIN_ZOOM = 0.4
 const MAX_ZOOM = 4.0
 const ZOOM_STEP = 0.25
 
-export default function DesignCanvas({ product, initialVariantId, jobName, prefill }) {
+export default function DesignCanvas({ product, initialVariantId, jobName, prefill, onOrderComplete }) {
   const canvasElRef  = useRef(null)
   const fabricRef    = useRef(null)
   const bgImageRef   = useRef(null)
@@ -275,23 +275,35 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   }
 
   // ── Export ────────────────────────────────────────────────────────────────
-  function getExportDataUrl() {
+  // Render a clean, full-resolution canvas: guides hidden, selection cleared,
+  // viewport reset (so zoom/pan don't affect output). Returns an HTMLCanvasElement.
+  function buildExportCanvas() {
     const canvas = fabricRef.current
     canvas.discardActiveObject()
-    // Temporarily reset viewport for clean export, then restore
+
+    const guides = canvas.getObjects().filter(o => o.isGuide)
+    guides.forEach(g => g.set('visible', false))
+
     const vpt = canvas.viewportTransform.slice()
     canvas.setViewportTransform([1, 0, 0, 1, 0, 0])
     canvas.renderAll()
-    const dataUrl = canvas.toDataURL({ format: 'png', multiplier: 1 / DISPLAY_SCALE, quality: 1 })
+
+    // toCanvasElement renders objects fresh at the given multiplier
+    const out = canvas.toCanvasElement(1 / DISPLAY_SCALE)
+
+    // Restore on-screen state
     canvas.setViewportTransform(vpt)
+    guides.forEach(g => g.set('visible', true))
     canvas.renderAll()
-    return dataUrl
+
+    return out
   }
 
   async function handleDownloadPDF() {
     setExporting(true)
     try {
-      const dataUrl  = getExportDataUrl()
+      const exportCanvas = buildExportCanvas()
+      const dataUrl  = exportCanvas.toDataURL('image/png', 1)
       const widthMm  = product.printWidth  / 11.811
       const heightMm = product.printHeight / 11.811
       const { jsPDF } = await import('jspdf')
@@ -308,15 +320,44 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     }
   }
 
+  async function handleDownloadTIFF() {
+    setExporting(true)
+    try {
+      const exportCanvas = buildExportCanvas()
+      const ctx = exportCanvas.getContext('2d')
+      const { width, height } = exportCanvas
+      const imageData = ctx.getImageData(0, 0, width, height)
+
+      const UTIF = (await import('utif')).default
+      // Encode RGBA → TIFF, tagged 300 DPI (t282/t283 resolution, t296=inches)
+      const tiffBuffer = UTIF.encodeImage(imageData.data.buffer, width, height, {
+        t282: [300], t283: [300], t296: [2],
+      })
+      const blob = new Blob([tiffBuffer], { type: 'image/tiff' })
+
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = buildFilename(jobName, variant.label, 'tiff')
+      a.click()
+      URL.revokeObjectURL(a.href)
+      showMsg('success', 'TIFF downloaded')
+    } catch (err) {
+      console.error('TIFF export failed:', err)
+      showMsg('error', 'TIFF export failed')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   async function handleUploadToDrive() {
     setExporting(true)
     try {
-      const blob     = dataURLtoBlob(getExportDataUrl())
+      const blob     = dataURLtoBlob(buildExportCanvas().toDataURL('image/png', 1))
       const filename = buildFilename(jobName, variant.label, 'tiff')
       const form = new FormData()
       form.append('file', blob, filename)
       form.append('businessName', jobName || 'ReviewTap')
-      form.append('orderNumber',  '')
+      form.append('orderNumber',  prefill?.orderNumber || '')
       form.append('productId',    product.id)
       form.append('filename',     filename)
       const res = await fetch('/api/upload', { method: 'POST', body: form })
@@ -324,6 +365,26 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       showMsg('success', 'Uploaded to Drive')
     } catch (err) {
       showMsg('error', `Drive upload failed: ${err.message}`)
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  // Mark the linked Formaloo order complete, then return to the inbox
+  async function handleMarkComplete() {
+    if (!prefill?.rowSlug) return
+    setExporting(true)
+    try {
+      const res = await fetch(`/api/orders/${prefill.rowSlug}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'done' }),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      showMsg('success', 'Order marked complete')
+      setTimeout(() => onOrderComplete?.(), 700)
+    } catch (err) {
+      showMsg('error', `Could not save: ${err.message}`)
     } finally {
       setExporting(false)
     }
@@ -347,6 +408,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
           onLogoRemove={handleLogoRemove}
           variantId={variantId}
           prefillGoogleUrl={prefill?.googleReviewUrl}
+          prefillLabel={prefill?.companyName}
         />
       </div>
 
@@ -414,19 +476,26 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
           )}
           <div className="flex items-center gap-2 ml-auto">
             <button className="btn-secondary" disabled={!hasAssets || exporting} onClick={handleDownloadPDF}>
-              {exporting
-                ? <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              }
-              Download PDF
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              PDF
             </button>
-            <button className="btn-primary" disabled={!hasAssets || exporting} onClick={handleUploadToDrive}>
+            <button className="btn-secondary" disabled={!hasAssets || exporting} onClick={handleDownloadTIFF}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              TIFF
+            </button>
+            <button className="btn-secondary" disabled={!hasAssets || exporting} onClick={handleUploadToDrive}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/>
                 <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
               </svg>
-              Send to Drive
+              Drive
             </button>
+            {prefill?.rowSlug && (
+              <button className="btn-primary" disabled={exporting} onClick={handleMarkComplete}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                Mark complete
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -461,7 +530,8 @@ function drawGuides(canvas, product, W, H) {
     width: W - safe * 2, height: H - safe * 2,
     fill: 'transparent',
     stroke: 'rgba(20,184,147,0.35)', strokeWidth: 1, strokeDashArray: [5, 4],
-    selectable: false, evented: false, hasControls: false, hasBorders: false, isBackground: true,
+    selectable: false, evented: false, hasControls: false, hasBorders: false,
+    isBackground: true, isGuide: true,
   }))
 }
 

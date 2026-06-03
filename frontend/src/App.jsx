@@ -114,6 +114,7 @@ export default function App() {
             initialVariantId={session.variantId}
             jobName={session.jobName}
             prefill={session.prefill}
+            onOrderComplete={() => { setSession(null); setTab('orders') }}
           />
         )}
       </main>
