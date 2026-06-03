@@ -12,12 +12,14 @@ const GAP_FULL = 120   // gap between side-by-side panels, full-res px
 
 export default function DesignCanvas({ product, initialVariantId, jobName, prefill, onOrderComplete }) {
   const canvasElRef = useRef(null)
+  const workspaceRef = useRef(null)
   const fabricRef   = useRef(null)
   const bgRefs      = useRef({})   // { faceId: fabric.Image }
   const spaceRef    = useRef(false)
   const panRef      = useRef(false)
   const lastPan     = useRef(null)
   const prefillDone = useRef(false)
+  const fitZoomRef  = useRef(1)    // fabric zoom that fits the artboard = "100%"
 
   const [variantId,   setVariantId]   = useState(prefill?.savedDesign?.variant_id || initialVariantId || product.defaultVariant)
   const [ready,       setReady]       = useState(false)
@@ -43,9 +45,11 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
 
   // ── Init ──────────────────────────────────────────────────────────────────
   useEffect(() => {
+    const ws = workspaceRef.current
     const canvas = new fabric.Canvas(canvasElRef.current, {
-      width: W, height: H,
-      backgroundColor: '#eef0f3',   // shows in the gap between panels
+      width:  ws ? ws.clientWidth  : W,
+      height: ws ? ws.clientHeight : H,
+      backgroundColor: '#eef0f3',   // the workspace behind the artboard
       preserveObjectStacking: true, selection: true,
     })
     fabricRef.current = canvas
@@ -62,7 +66,6 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
         }
         if (++loaded === layout.length) {
           drawGuides(canvas, layout, product.safeMargin)
-          // Restore a saved design, else prefill the logo
           finishInit(canvas)
         }
       }, { crossOrigin: 'anonymous' })
@@ -73,10 +76,10 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       if (saved) {
         canvas.loadFromJSON(saved, () => {
           rebuildAfterLoad(canvas)
-          canvas.renderAll(); setReady(true); snapshot()
+          fitToScreen(); setReady(true); snapshot()
         })
       } else {
-        canvas.renderAll(); setReady(true); snapshot()
+        fitToScreen(); setReady(true); snapshot()
         if (prefill?.logoUrl && !prefillDone.current) {
           prefillDone.current = true
           const proxied = `/api/proxy-image?url=${encodeURIComponent(prefill.logoUrl)}`
@@ -85,6 +88,15 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
         }
       }
     }
+
+    // Re-fit when the workspace resizes
+    const ro = new ResizeObserver(() => {
+      const el = workspaceRef.current
+      if (!el) return
+      canvas.setDimensions({ width: el.clientWidth, height: el.clientHeight })
+      fitToScreen()
+    })
+    if (ws) ro.observe(ws)
 
     function rebuildAfterLoad(canvas) {
       bgRefs.current = {}
@@ -109,15 +121,16 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     canvas.on('object:added',    snap)
     canvas.on('object:removed',  snap)
 
-    // Ctrl/Cmd + wheel zoom
+    // Wheel = zoom toward the cursor (no modifier needed; it's a design canvas)
     canvas.on('mouse:wheel', opt => {
       const e = opt.e
-      if (!e.ctrlKey && !e.metaKey) return
       e.preventDefault(); e.stopPropagation()
-      let next = canvas.getZoom() * (e.deltaY > 0 ? 0.92 : 1.08)
-      next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next))
-      canvas.zoomToPoint(new fabric.Point(opt.pointer?.x ?? W / 2, opt.pointer?.y ?? H / 2), next)
-      setZoom(Math.round(next * 100) / 100)
+      const curMult = canvas.getZoom() / fitZoomRef.current
+      let nextMult = curMult * (e.deltaY > 0 ? 0.9 : 1.1)
+      nextMult = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextMult))
+      const p = canvas.getPointer(e, true)
+      canvas.zoomToPoint(new fabric.Point(p.x, p.y), fitZoomRef.current * nextMult)
+      setZoom(Math.round(nextMult * 100) / 100)
     })
     // Space / middle-mouse pan
     canvas.on('mouse:down', opt => {
@@ -159,6 +172,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     return () => {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup',   onKeyUp)
+      ro.disconnect()
       canvas.dispose(); clear()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -220,16 +234,24 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   function sendBackward() { const o = fabricRef.current?.getActiveObject(); if (o && !o.isBackground) { fabricRef.current.sendBackwards(o); fabricRef.current.renderAll(); snapshot() } }
   function deleteSelected() { const o = fabricRef.current?.getActiveObject(); if (o && !o.isBackground) { fabricRef.current.remove(o); fabricRef.current.discardActiveObject(); fabricRef.current.renderAll() } }
 
-  function applyZoom(z) {
+  // Fit the artboard inside the workspace and centre it; this is "100%".
+  function fitToScreen() {
     const canvas = fabricRef.current; if (!canvas) return
-    z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))
-    canvas.zoomToPoint(new fabric.Point(W / 2, H / 2), z); setZoom(Math.round(z * 100) / 100)
+    const vw = canvas.getWidth(), vh = canvas.getHeight()
+    const z0 = Math.min(vw / W, vh / H) * 0.88
+    fitZoomRef.current = z0
+    canvas.setViewportTransform([z0, 0, 0, z0, (vw - W * z0) / 2, (vh - H * z0) / 2])
+    setZoom(1)
+    spaceRef.current = false; canvas.selection = true; canvas.defaultCursor = 'default'
   }
-  function resetZoom() {
+  // Zoom relative to fit (mult of 1 == fit), toward the workspace centre
+  function applyZoom(mult) {
     const canvas = fabricRef.current; if (!canvas) return
-    canvas.setZoom(1); canvas.setViewportTransform([1, 0, 0, 1, 0, 0]); setZoom(1)
-    spaceRef.current = false; canvas.selection = true
+    mult = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, mult))
+    canvas.zoomToPoint(new fabric.Point(canvas.getWidth() / 2, canvas.getHeight() / 2), fitZoomRef.current * mult)
+    setZoom(Math.round(mult * 100) / 100)
   }
+  const resetZoom = fitToScreen
 
   // ── Export ──────────────────────────────────────────────────────────────
   // Render one face to a canvas at its exact print size by rendering the whole
@@ -239,8 +261,13 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     canvas.discardActiveObject()
     const guides = canvas.getObjects().filter(o => o.isGuide)
     guides.forEach(g => g.set('visible', false))
+
+    // Temporarily shrink the canvas to the artboard size with identity viewport
+    // so toCanvasElement renders exactly the content (not the big workspace).
+    const savedW = canvas.getWidth(), savedH = canvas.getHeight()
     const vpt = canvas.viewportTransform.slice()
     canvas.setViewportTransform([1, 0, 0, 1, 0, 0])
+    canvas.setDimensions({ width: W, height: H })
 
     const bg = bgRefs.current[entry.face.id]
     const needSwap = bg && templateUrl && templateUrl !== entry.face.template
@@ -250,6 +277,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     const full = canvas.toCanvasElement(1 / DISPLAY_SCALE)
 
     if (needSwap) await swapBgElement(bg, entry.face.template, entry.face.width, entry.x)
+    canvas.setDimensions({ width: savedW, height: savedH })
     canvas.setViewportTransform(vpt)
     guides.forEach(g => g.set('visible', true))
     canvas.renderAll()
@@ -415,22 +443,16 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
           />
         </div>
 
-        <div className="flex-1 flex items-center justify-center p-8 bg-gray-100 overflow-auto">
-          <div className="relative" style={{ width: W, height: H }}>
-            {/* Panel labels */}
-            {faces.length > 1 && layout.map(({ face, x }) => (
-              <span key={face.id} className="absolute text-xs font-medium text-gray-400 -translate-x-1/2"
-                style={{ left: (x + face.width / 2) * DISPLAY_SCALE, top: -22 }}>
-                {face.label}
-              </span>
-            ))}
-            {!ready && (
-              <div className="absolute inset-0 flex items-center justify-center bg-white/70 z-10">
-                <svg className="animate-spin w-8 h-8 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-              </div>
-            )}
-            <canvas ref={canvasElRef} className="shadow-2xl" />
-          </div>
+        <div ref={workspaceRef} className="flex-1 relative bg-gray-100 overflow-hidden">
+          {!ready && (
+            <div className="absolute inset-0 flex items-center justify-center z-10">
+              <svg className="animate-spin w-8 h-8 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+            </div>
+          )}
+          <canvas ref={canvasElRef} />
+          <span className="absolute bottom-3 left-1/2 -translate-x-1/2 text-xs text-gray-400 bg-white/70 px-2 py-0.5 rounded-full pointer-events-none">
+            Scroll to zoom · Space-drag to pan
+          </span>
         </div>
 
         <div className="border-t border-gray-100 bg-white px-5 py-3 flex items-center gap-4">
@@ -479,10 +501,19 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function drawGuides(canvas, layout, safeMargin) {
+  const multi = layout.length > 1
   layout.forEach(({ face, x }) => {
     const ox = x * DISPLAY_SCALE
     const pw = face.width * DISPLAY_SCALE
     const ph = face.height * DISPLAY_SCALE
+    if (multi && face.label) {
+      canvas.add(new fabric.Text(face.label, {
+        left: ox + pw / 2, top: -30, originX: 'center', originY: 'bottom',
+        fontSize: 13, fill: '#9ca3af', fontFamily: 'Inter, sans-serif',
+        selectable: false, evented: false, hasControls: false, hasBorders: false,
+        isBackground: true, isGuide: true, faceId: face.id,
+      }))
+    }
     if (safeMargin) {
       const safe = safeMargin * DISPLAY_SCALE
       canvas.add(new fabric.Rect({
@@ -522,7 +553,8 @@ function hideSmartGuides(canvas) {
 
 function clampToCanvas(obj, W, H) {
   obj.setCoords()
-  const b = obj.getBoundingRect()
+  // absolute=true → bounding rect in content space, ignoring viewport zoom/pan
+  const b = obj.getBoundingRect(true)
   if (b.left < 0)            obj.set('left', obj.left - b.left)
   if (b.top  < 0)            obj.set('top',  obj.top  - b.top)
   if (b.left + b.width  > W) obj.set('left', W - b.width  - (b.left - obj.left))
