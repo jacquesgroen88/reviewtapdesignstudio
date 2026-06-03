@@ -1,24 +1,26 @@
 [build]
-  base    = "frontend"
-  command = "npm run build"
-  publish = "dist"
+  # No base — install runs at repo root so functions get their deps,
+  # then we install + build the frontend explicitly.
+  command = "npm install && npm --prefix frontend install && npm --prefix frontend run build"
+  publish = "frontend/dist"
 
 [build.environment]
   NODE_VERSION = "20"
 
-# Tell Netlify where the functions live (relative to repo root)
 [functions]
-  directory = "../netlify/functions"
+  directory = "netlify/functions"
   node_bundler = "esbuild"
+  # Native binary — let Netlify include it rather than bundle it
+  external_node_modules = ["sharp"]
 
-# Route API calls to the serverless function
+# API → serverless Express function
 [[redirects]]
   from   = "/api/*"
   to     = "/.netlify/functions/api"
   status = 200
   force  = true
 
-# QR redirects — fast serverless redirect
+# QR redirect → dedicated function
 [[redirects]]
   from   = "/r/:code"
   to     = "/.netlify/functions/redirect"
