@@ -149,14 +149,17 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     if (!ready || !prefill || prefillDone.current) return
     prefillDone.current = true
 
-    // Load logo from Formaloo S3 URL
+    // Load logo from Formaloo S3 URL — routed through our proxy so it's
+    // same-origin (S3 sends no CORS headers, which would taint the canvas
+    // and break export). The proxy makes it exportable.
     if (prefill.logoUrl) {
       const id  = 'prefill_logo'
+      const proxied = `/api/proxy-image?url=${encodeURIComponent(prefill.logoUrl)}`
       const entry = {
         id,
         name:         `${prefill.companyName || 'Logo'}.png`,
-        originalSrc:  prefill.logoUrl,
-        processedSrc: prefill.logoUrl,
+        originalSrc:  proxied,
+        processedSrc: proxied,
         bgRemoved:    false,
       }
       setLogos([entry])
