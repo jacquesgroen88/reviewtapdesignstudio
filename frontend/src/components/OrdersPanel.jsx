@@ -25,7 +25,7 @@ const FILTER_TABS = [
   { id: 'done',         label: 'Done' },
 ]
 
-export default function OrdersPanel({ onDesignOrder }) {
+export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
   const [orders,   setOrders]   = useState([])
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState(null)
@@ -164,7 +164,8 @@ export default function OrdersPanel({ onDesignOrder }) {
               <OrderCard
                 key={order.rowSlug}
                 order={order}
-                onDesign={() => onDesignOrder(order)}
+                onNewDesign={() => onNewDesign(order)}
+                onOpenDesign={onOpenDesign}
                 onStatusChange={s => updateStatus(order.rowSlug, s)}
                 isUpdating={updating === order.rowSlug}
               />
@@ -185,7 +186,7 @@ export default function OrdersPanel({ onDesignOrder }) {
   )
 }
 
-function OrderCard({ order, onDesign, onStatusChange, isUpdating }) {
+function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdating }) {
   const [expanded, setExpanded] = useState(false)
   const status = STATUS_LABELS[order.status] ?? STATUS_LABELS.pending
   const canDesign = order.orderedStand || order.orderedCard
@@ -225,15 +226,18 @@ function OrderCard({ order, onDesign, onStatusChange, isUpdating }) {
         )}
       </div>
 
-      {/* Designs created */}
-      {order.designedProducts?.length > 0 && (
-        <div className="flex gap-1.5 flex-wrap items-center">
-          <span className="text-xs text-gray-400">Designed:</span>
-          {order.designedProducts.map(pid => (
-            <span key={pid} className="inline-flex items-center gap-1 text-xs font-medium bg-brand-50 text-brand-700 px-2 py-0.5 rounded-full">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-              {pid === 'stand' ? 'Stand' : pid === 'card' ? 'Card' : pid}
-            </span>
+      {/* Designs created for this order */}
+      {order.designs?.length > 0 && (
+        <div className="space-y-1">
+          <span className="text-xs text-gray-400">Designs ({order.designs.length}):</span>
+          {order.designs.map(d => (
+            <div key={d.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-gray-50">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-brand-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
+              <span className="flex-1 min-w-0 text-xs font-medium text-gray-700 truncate">{d.name}</span>
+              <span className="text-xs text-gray-400 shrink-0">{d.product_id === 'stand' ? 'Stand' : 'Card'}</span>
+              <button onClick={() => onOpenDesign({ ...d, ownerName: order.companyName, logoUrl: order.logoUrl, googleReviewUrl: order.googleReviewUrl })}
+                className="shrink-0 text-xs font-medium text-brand-600 hover:text-brand-700">Edit</button>
+            </div>
           ))}
         </div>
       )}
@@ -295,14 +299,11 @@ function OrderCard({ order, onDesign, onStatusChange, isUpdating }) {
       {/* Actions */}
       <div className="flex gap-2 pt-1 border-t border-gray-50">
         {canDesign && (
-          <button
-            className="btn-primary flex-1 text-sm py-2"
-            onClick={onDesign}
-          >
+          <button className="btn-primary flex-1 text-sm py-2" onClick={onNewDesign}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
             </svg>
-            {order.hasDesign || order.status === 'done' ? 'Edit' : 'Design'}
+            New design
           </button>
         )}
         <StatusDropdown

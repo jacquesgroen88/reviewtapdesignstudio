@@ -7,6 +7,7 @@ import qrRouter       from './routes/qr.js'
 import redirectRouter from './routes/redirect.js'
 import ordersRouter   from './routes/orders.js'
 import jobsRouter     from './routes/jobs.js'
+import designsRouter  from './routes/designs.js'
 import proxyImageRouter from './routes/proxyImage.js'
 
 const app  = express()
@@ -20,6 +21,7 @@ app.use('/api/remove-bg', removeBgRouter)
 app.use('/api/qr',        qrRouter)
 app.use('/api/orders',    ordersRouter)
 app.use('/api/jobs',      jobsRouter)
+app.use('/api/designs',   designsRouter)
 app.use('/api/proxy-image', proxyImageRouter)
 app.use('/r',             redirectRouter)   // dynamic QR redirect: /r/:code
 

@@ -1,6 +1,6 @@
 import express from 'express'
 import { fetchOrders, fetchOrder } from '../services/formaloo.js'
-import { getOrderStatus, setOrderStatus, getAllOrderStatuses, getDesignsForOrder, saveDesign, listDesignedProducts } from '../services/database.js'
+import { getOrderStatus, setOrderStatus, getAllOrderStatuses, listDesignsByOwner } from '../services/database.js'
 
 const router = express.Router()
 
@@ -19,14 +19,14 @@ router.get('/', async (req, res) => {
 
     const statuses  = await getAllOrderStatuses()
     const statusMap = Object.fromEntries(statuses.map(s => [s.row_slug, s]))
-    const designedMap = await listDesignedProducts()
+    const designsMap = await listDesignsByOwner()
 
     const enriched = orders.map(order => ({
       ...order,
       status: statusMap[order.rowSlug]?.status ?? (order.orderedStand || order.orderedCard ? 'pending' : 'not_needed'),
       note:   statusMap[order.rowSlug]?.note   ?? null,
-      designedProducts: designedMap[order.rowSlug] ?? [],
-      hasDesign: !!designedMap[order.rowSlug]?.length,
+      designs: designsMap[order.rowSlug] ?? [],
+      hasDesign: !!designsMap[order.rowSlug]?.length,
     }))
 
     let result
@@ -57,26 +57,7 @@ router.get('/:rowSlug', async (req, res) => {
   }
 })
 
-// GET all saved designs (one per product) for an order
-router.get('/:rowSlug/designs', async (req, res) => {
-  try {
-    res.json(await getDesignsForOrder(req.params.rowSlug))
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-// PUT saved design
-router.put('/:rowSlug/design', async (req, res) => {
-  try {
-    const { productId, variantId, design } = req.body
-    if (!productId || !variantId || !design) return res.status(400).json({ error: 'productId, variantId, design required' })
-    await saveDesign(req.params.rowSlug, productId, variantId, design)
-    res.json({ ok: true })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
+// (Design read/write moved to /api/designs — designs are first-class now.)
 
 router.patch('/:rowSlug/status', async (req, res) => {
   const { status, note } = req.body

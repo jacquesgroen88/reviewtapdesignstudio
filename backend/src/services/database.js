@@ -87,27 +87,51 @@ export async function getAllOrderStatuses() {
 
 // ── Saved designs ─────────────────────────────────────────────────────────────
 
-export async function getDesignsForOrder(rowSlug) {
-  const { data, error } = await getClient()
-    .from('order_designs').select('*').eq('row_slug', rowSlug)
+// ── Designs (first-class, reusable; an order/job can have many) ───────────────
+
+const DESIGN_META = 'id, name, owner_slug, product_id, variant_id, created_at, updated_at'
+
+export async function listDesigns({ owner } = {}) {
+  let q = getClient().from('designs').select(DESIGN_META).order('updated_at', { ascending: false })
+  if (owner) q = q.eq('owner_slug', owner)
+  const { data, error } = await q
   if (error) throw error
   return data ?? []
 }
 
-export async function saveDesign(rowSlug, productId, variantId, design) {
-  const { error } = await getClient().from('order_designs').upsert(
-    { row_slug: rowSlug, product_id: productId, variant_id: variantId, design, updated_at: new Date().toISOString() },
-    { onConflict: 'row_slug,product_id' }
-  )
-  if (error) throw error
+export async function getDesign(id) {
+  const { data } = await getClient().from('designs').select('*').eq('id', id).maybeSingle()
+  return data
 }
 
-// Map of row_slug → [product_id, ...] for every order that has a design
-export async function listDesignedProducts() {
-  const { data, error } = await getClient().from('order_designs').select('row_slug, product_id')
+export async function createDesign({ id, name, ownerSlug, productId, variantId, design }) {
+  const { data, error } = await getClient().from('designs')
+    .insert({ id, name, owner_slug: ownerSlug, product_id: productId, variant_id: variantId, design })
+    .select().single()
+  if (error) throw error
+  return data
+}
+
+export async function updateDesign(id, fields) {
+  const patch = { updated_at: new Date().toISOString() }
+  if (fields.name       !== undefined) patch.name = fields.name
+  if (fields.variantId  !== undefined) patch.variant_id = fields.variantId
+  if (fields.design     !== undefined) patch.design = fields.design
+  const { data, error } = await getClient().from('designs').update(patch).eq('id', id).select().single()
+  if (error) throw error
+  return data
+}
+
+export async function deleteDesign(id) {
+  await getClient().from('designs').delete().eq('id', id)
+}
+
+// Map of owner_slug → [{id,name,product_id,variant_id}] for list views (no JSONB)
+export async function listDesignsByOwner() {
+  const { data, error } = await getClient().from('designs').select(DESIGN_META)
   if (error) throw error
   const map = {}
-  for (const d of data ?? []) (map[d.row_slug] ||= []).push(d.product_id)
+  for (const d of data ?? []) (map[d.owner_slug] ||= []).push(d)
   return map
 }
 

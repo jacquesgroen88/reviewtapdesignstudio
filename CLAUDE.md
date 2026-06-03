@@ -86,16 +86,22 @@ renders full-res via `canvas.toCanvasElement(1/DISPLAY_SCALE)`. Then:
 - **TIFF**: `getImageData` → `UTIF.encodeImage` (300 DPI tags) → blob download. Client-side.
 - **Drive**: PNG → `/api/upload` → sharp converts to 300 DPI LZW TIFF → Google Drive.
 
-### Save / reopen / mark complete
-When designing from an order (`prefill.rowSlug` set) the footer shows **Save** and **Done**:
-- **Save** → `PUT /api/orders/:slug/design` (serializes every face's Fabric JSON via
-  `api.exportState()`) + sets status `in_progress`. Stays in editor.
-- **Done** → same save + status `done`, returns to inbox.
-Orders are **never locked** — clicking an order with a saved design reopens it: App fetches
-`GET /api/orders/:slug/design`, restores product/variant, and each FaceCanvas `importState()`s
-its saved JSON (re-attaching move handlers, rebuilding the asset-panel list). Orders with no
-saved design open the ProductPicker (prefilled with company name) to choose product + colour.
-Saved design = Supabase `order_designs(row_slug, product_id, variant_id, design JSONB)`.
+### Designs are first-class & reusable (one shared library)
+Designs live in Supabase `designs(id, name, owner_slug, product_id, variant_id, design JSONB)`.
+`owner_slug` ties a design to an order (Formaloo rowSlug) or is null for a library design.
+An order/job can have **many** designs (e.g. one stand with 10 different QR codes).
+- API: `/api/designs` (list `?owner=`), `GET/PUT/DELETE /api/designs/:id`,
+  `POST /api/designs/:id/duplicate`. `design` JSONB = `{ assets: [...] }` (logo/QR placements).
+- **Editor save** (`DesignCanvas`): first Save `POST`s a new design (prompts for a name,
+  `ownerSlug = prefill.rowSlug || null`) and stores `currentDesignId`; later saves `PUT`.
+- **Duplicate** button = save current canvas as a NEW design, then edit the copy (swap its QR).
+- **QR variants** button = bulk: pick N saved QR codes → one new design per code (same layout,
+  QR swapped via `generateStyledQR` from `lib/qr.js`).
+- **Design Studio tab** = `DesignLibrary` listing all designs (open/duplicate/rename/delete).
+- **Order cards** list that order's designs (`order.designs`), each with an **Edit** that opens
+  it directly; a **New design** button routes to the picker scoped to the order.
+- Restore loads only `design.assets` (backgrounds/guides redrawn fresh) — see Gotcha #11.
+- Legacy `order_designs` table is kept as a backup; the migration backfilled `designs` from it.
 
 ### Mark complete (legacy note)
 Status lives in `order_status`. The `done` status no longer disables the card — the Design

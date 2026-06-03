@@ -1,7 +1,7 @@
 import express from 'express'
 import { nanoid } from 'nanoid'
 import { createJob, listJobs, getJob, renameJob, deleteJob,
-         listDesignedProducts, getAllOrderStatuses } from '../services/database.js'
+         listDesignsByOwner, getAllOrderStatuses } from '../services/database.js'
 
 const router = express.Router()
 
@@ -9,12 +9,13 @@ const router = express.Router()
 router.get('/', async (req, res) => {
   try {
     const jobs = await listJobs()
-    const designedMap = await listDesignedProducts()
+    const designsMap = await listDesignsByOwner()
     const statuses = await getAllOrderStatuses()
     const statusMap = Object.fromEntries(statuses.map(s => [s.row_slug, s]))
     res.json(jobs.map(j => ({
       ...j,
-      designedProducts: designedMap[j.id] ?? [],
+      designs: designsMap[j.id] ?? [],
+      designedProducts: [...new Set((designsMap[j.id] ?? []).map(d => d.product_id))],
       status: statusMap[j.id]?.status ?? 'pending',
     })))
   } catch (err) {

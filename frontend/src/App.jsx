@@ -1,59 +1,58 @@
 import { useState } from 'react'
-import ProductPicker from './components/ProductPicker.jsx'
-import DesignCanvas  from './components/DesignCanvas.jsx'
-import AdminPanel    from './components/AdminPanel.jsx'
-import OrdersPanel   from './components/OrdersPanel.jsx'
-import JobsHome      from './components/JobsHome.jsx'
+import ProductPicker  from './components/ProductPicker.jsx'
+import DesignCanvas   from './components/DesignCanvas.jsx'
+import AdminPanel     from './components/AdminPanel.jsx'
+import OrdersPanel    from './components/OrdersPanel.jsx'
+import DesignLibrary  from './components/DesignLibrary.jsx'
+import { getProduct } from './lib/products.js'
 
 export default function App() {
   const [session,        setSession]        = useState(null)
-  const [pendingPrefill, setPendingPrefill] = useState(null)    // data awaiting product choice
+  const [pendingPrefill, setPendingPrefill] = useState(null)    // context awaiting product choice
   const [studioView,     setStudioView]     = useState('home')  // 'home' | 'picker'
   const [tab,            setTab]            = useState('orders') // 'orders' | 'studio' | 'admin'
 
-  async function handleStart(sessionData) {
-    // sessionData = { jobName, product, variantId } from the picker
-    let prefill = pendingPrefill
-
-    // Brand-new standalone design (not from an order or existing job) → create a job
-    if (!prefill?.rowSlug) {
-      try {
-        const res = await fetch('/api/jobs', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: sessionData.jobName || 'Untitled job' }),
-        })
-        if (res.ok) {
-          const job = await res.json()
-          prefill = { rowSlug: job.id, companyName: job.name, isJob: true, designsByProduct: {} }
-        }
-      } catch { /* save just won't be available if backend is down */ }
+  // Start a brand-new design (from the picker). A design row is created on first Save.
+  function handleStart(sessionData) {
+    // sessionData = { jobName, product, variantId }
+    const prefill = {
+      ...(pendingPrefill || {}),
+      designId: null,
+      savedDesign: null,
     }
-
-    const designsByProduct = prefill?.designsByProduct || {}
-    const saved = designsByProduct[sessionData.product.id] || null
     setSession({
       ...sessionData,
-      jobName: prefill?.companyName || sessionData.jobName,
-      variantId: saved?.variant_id || sessionData.variantId,
-      prefill: prefill ? { ...prefill, savedDesign: saved } : undefined,
+      jobName: pendingPrefill?.companyName || sessionData.jobName,
+      prefill,
     })
     setPendingPrefill(null)
     setTab('studio')
   }
 
-  // Open a saved standalone job → straight to the picker with its designs
-  async function handleOpenJob(job) {
-    let designsByProduct = {}
+  // Open an existing saved design directly into the editor
+  async function handleOpenDesign(designMeta) {
     try {
-      const res = await fetch(`/api/orders/${job.id}/designs`)
-      if (res.ok) {
-        const arr = await res.json()
-        designsByProduct = Object.fromEntries(arr.map(d => [d.product_id, d]))
-      }
+      const res = await fetch(`/api/designs/${designMeta.id}`)
+      if (!res.ok) return
+      const full = await res.json()
+      const product = getProduct(full.product_id)
+      if (!product) return
+      setSession({
+        jobName:   designMeta.ownerName || full.name,
+        product,
+        variantId: full.variant_id,
+        prefill: {
+          rowSlug:     full.owner_slug || null,
+          designId:    full.id,
+          companyName: designMeta.ownerName || full.name,
+          logoUrl:        designMeta.logoUrl,
+          googleReviewUrl: designMeta.googleReviewUrl,
+          savedDesign: { design: full.design },
+        },
+      })
+      setPendingPrefill(null)
+      setTab('studio')
     } catch { /* ignore */ }
-    setPendingPrefill({ rowSlug: job.id, companyName: job.name, isJob: true, designsByProduct })
-    setStudioView('picker')
-    setSession(null)
   }
 
   function handleBack() {
@@ -63,9 +62,9 @@ export default function App() {
     setTab('orders')
   }
 
-  // Called when designer clicks "Design" / "Edit" on an order card
-  async function handleDesignOrder(order) {
-    const basePrefill = {
+  // "+ New design" on an order → picker scoped to that order
+  function handleNewOrderDesign(order) {
+    setPendingPrefill({
       logoUrl:         order.logoUrl,
       googleReviewUrl: order.googleReviewUrl,
       orderNumber:     order.orderNumber,
@@ -73,21 +72,7 @@ export default function App() {
       rowSlug:         order.rowSlug,
       orderedStand:    order.orderedStand,
       orderedCard:     order.orderedCard,
-    }
-
-    // Load any existing designs (one per product) so the picker can show which
-    // are already done and reopen them; always go through the picker so a second
-    // product (e.g. a card on a stand order) can be added.
-    let designsByProduct = {}
-    try {
-      const res = await fetch(`/api/orders/${order.rowSlug}/designs`)
-      if (res.ok) {
-        const arr = await res.json()
-        designsByProduct = Object.fromEntries(arr.map(d => [d.product_id, d]))
-      }
-    } catch { /* ignore */ }
-
-    setPendingPrefill({ ...basePrefill, designsByProduct })
+    })
     setSession(null)
     setStudioView('picker')
     setTab('studio')
@@ -154,11 +139,11 @@ export default function App() {
       </header>
 
       <main className="flex-1 flex flex-col">
-        {tab === 'orders' && <OrdersPanel onDesignOrder={handleDesignOrder} />}
+        {tab === 'orders' && <OrdersPanel onNewDesign={handleNewOrderDesign} onOpenDesign={handleOpenDesign} />}
         {tab === 'admin'  && <AdminPanel />}
         {tab === 'studio' && session && (
           <DesignCanvas
-            key={session.product.id + '-' + session.variantId + '-' + (session.prefill?.rowSlug || 'manual')}
+            key={(session.prefill?.designId || 'new') + '-' + session.product.id}
             product={session.product}
             initialVariantId={session.variantId}
             jobName={session.jobName}
@@ -174,9 +159,9 @@ export default function App() {
           />
         )}
         {tab === 'studio' && !session && studioView === 'home' && (
-          <JobsHome
+          <DesignLibrary
             onNewDesign={() => { setPendingPrefill(null); setStudioView('picker') }}
-            onOpenJob={handleOpenJob}
+            onOpenDesign={handleOpenDesign}
           />
         )}
       </main>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { fabric } from 'fabric'
 import { DISPLAY_SCALE } from '../lib/products.js'
+import { generateStyledQR, QR_BASE_URL } from '../lib/qr.js'
 import { useHistory } from '../hooks/useHistory.js'
 import LogoPanel     from './LogoPanel.jsx'
 import CanvasToolbar from './CanvasToolbar.jsx'
@@ -27,6 +28,8 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   const [zoom,        setZoom]        = useState(1)
   const [exporting,   setExporting]   = useState(false)
   const [exportMsg,   setExportMsg]   = useState(null)
+  const [currentDesignId, setCurrentDesignId] = useState(prefill?.designId || null)
+  const [showVariants, setShowVariants] = useState(false)
 
   const { snapshot, undo, redo, canUndo, canRedo, clear } = useHistory(fabricRef)
 
@@ -337,45 +340,105 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     finally { setExporting(false) }
   }
 
-  // ── Save / restore / complete ─────────────────────────────────────────────
-  function serializeDesign() {
-    const canvas = fabricRef.current
-    const assets = canvas.getObjects()
+  // ── Save / duplicate / variants / complete ────────────────────────────────
+  function serializeAssets() {
+    return fabricRef.current.getObjects()
       .filter(o => o.type === 'image' && !o.isBackground && !o.isGuide)
       .map(o => ({ id: o.id, isQR: !!o.isQR, src: o.getSrc ? o.getSrc() : '', left: o.left, top: o.top, scaleX: o.scaleX, scaleY: o.scaleY, angle: o.angle || 0 }))
-    return { product_id: product.id, variant_id: variantId, assets }
   }
+  function defaultName(suffix) {
+    const base = jobName || 'Design'
+    return `${base} – ${product.name}${suffix ? ' ' + suffix : ''}`
+  }
+
+  // Create a brand-new design row, or update the one we're editing
   async function persistDesign() {
-    const res = await fetch(`/api/orders/${prefill.rowSlug}/design`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ productId: product.id, variantId, design: serializeDesign() }),
+    const design = { assets: serializeAssets() }
+    if (currentDesignId) {
+      const res = await fetch(`/api/designs/${currentDesignId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ variantId, design }),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      return currentDesignId
+    }
+    const name = (window.prompt('Name this design:', defaultName('')) || '').trim()
+    if (!name) throw new Error('cancelled')
+    const res = await fetch('/api/designs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, ownerSlug: prefill?.rowSlug || null, productId: product.id, variantId, design }),
     })
     if (!res.ok) throw new Error(await res.text())
+    const d = await res.json()
+    setCurrentDesignId(d.id)
+    return d.id
   }
   async function setStatus(status) {
-    const res = await fetch(`/api/orders/${prefill.rowSlug}/status`, {
+    if (!prefill?.rowSlug) return
+    await fetch(`/api/orders/${prefill.rowSlug}/status`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
-    })
-    if (!res.ok) throw new Error(await res.text())
+    }).catch(() => {})
   }
   async function handleSaveDesign() {
-    if (!prefill?.rowSlug) return
     setExporting(true)
-    try { await persistDesign(); await setStatus('pending_approval'); showMsg('success', 'Design saved — reopen it anytime') }
-    catch (err) { showMsg('error', `Save failed: ${err.message}`) }
+    try { await persistDesign(); await setStatus('pending_approval'); showMsg('success', 'Design saved to your library') }
+    catch (err) { if (err.message !== 'cancelled') showMsg('error', `Save failed: ${err.message}`) }
     finally { setExporting(false) }
   }
   async function handleMarkComplete() {
-    if (!prefill?.rowSlug) return
     setExporting(true)
     try { await persistDesign(); await setStatus('done'); showMsg('success', 'Saved & marked complete'); setTimeout(() => onOrderComplete?.(), 700) }
-    catch (err) { showMsg('error', `Could not save: ${err.message}`) }
+    catch (err) { if (err.message !== 'cancelled') showMsg('error', `Could not save: ${err.message}`) }
     finally { setExporting(false) }
   }
 
-  function showMsg(type, text) { setExportMsg({ type, text }); setTimeout(() => setExportMsg(null), 4000) }
+  // Duplicate = save the current canvas as a NEW design and switch to editing it
+  async function handleDuplicate() {
+    setExporting(true)
+    try {
+      const name = (window.prompt('Name for the duplicate:', defaultName('(copy)')) || '').trim()
+      if (!name) return
+      const res = await fetch('/api/designs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, ownerSlug: prefill?.rowSlug || null, productId: product.id, variantId, design: { assets: serializeAssets() } }),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      const d = await res.json()
+      setCurrentDesignId(d.id)
+      showMsg('success', `Duplicated — now editing “${name}”. Swap the QR and Save.`)
+    } catch (err) { showMsg('error', `Duplicate failed: ${err.message}`) }
+    finally { setExporting(false) }
+  }
+
+  // Bulk: same design, one new saved design per selected QR code (swaps the QR)
+  async function handleGenerateVariants(qrCodes) {
+    setShowVariants(false)
+    if (!qrCodes.length) return
+    setExporting(true)
+    try {
+      const baseAssets = serializeAssets()
+      if (!baseAssets.some(a => a.isQR)) { showMsg('error', 'Add a QR code to the design first.'); return }
+      const isBlack = variantId === 'black'
+      const qrStyle = { fg: isBlack ? '#fff6ea' : '#000000', bg: isBlack ? '#000000' : '#ffffff', ec: 'M', styleId: 'rounded', width: 600 }
+      let made = 0
+      for (const qr of qrCodes) {
+        const dataUrl = await generateStyledQR(`${QR_BASE_URL}/${qr.id}`, qrStyle)
+        const assets = baseAssets.map(a => a.isQR ? { ...a, src: dataUrl } : a)
+        const res = await fetch('/api/designs', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: `${jobName || 'Design'} – ${qr.label}`, ownerSlug: prefill?.rowSlug || null, productId: product.id, variantId, design: { assets } }),
+        })
+        if (res.ok) made++
+      }
+      showMsg('success', `Created ${made} QR variant${made === 1 ? '' : 's'} — find them in the library/order`)
+    } catch (err) { showMsg('error', `Variant generation failed: ${err.message}`) }
+    finally { setExporting(false) }
+  }
+
+  function showMsg(type, text) { setExportMsg({ type, text }); setTimeout(() => setExportMsg(null), 5000) }
 
   const hasAssets = logos.length > 0
+  const hasQR = logos.some(l => l.isQR)
   const zoomPct = Math.round(zoom * 100)
 
   return (
@@ -458,19 +521,93 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
               Drive
             </button>
+            {hasQR && (
+              <button className="btn-secondary" title="Create one design per QR code (same layout, different QR)" disabled={exporting} onClick={() => setShowVariants(true)}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 20h3M20 17v3"/></svg>
+                QR variants
+              </button>
+            )}
+            {hasAssets && (
+              <button className="btn-secondary" title="Save a copy as a new design, then swap its QR" disabled={exporting} onClick={handleDuplicate}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                Duplicate
+              </button>
+            )}
+            <button className="btn-secondary" title="Save this design to your library" disabled={!hasAssets || exporting} onClick={handleSaveDesign}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              {currentDesignId ? 'Save' : 'Save to library'}
+            </button>
             {prefill?.rowSlug && (
-              <>
-                <button className="btn-secondary" title="Save the design so you can reopen it later" disabled={exporting} onClick={handleSaveDesign}>
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-                  Save
-                </button>
-                <button className="btn-primary" title="Save and mark the order complete" disabled={exporting} onClick={handleMarkComplete}>
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                  Done
-                </button>
-              </>
+              <button className="btn-primary" title="Save and mark the order complete" disabled={!hasAssets || exporting} onClick={handleMarkComplete}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                Done
+              </button>
             )}
           </div>
+        </div>
+      </div>
+
+      {showVariants && (
+        <VariantsModal onClose={() => setShowVariants(false)} onGenerate={handleGenerateVariants} />
+      )}
+    </div>
+  )
+}
+
+// ── QR variants modal ─────────────────────────────────────────────────────────
+
+function VariantsModal({ onClose, onGenerate }) {
+  const [codes, setCodes]   = useState([])
+  const [sel,   setSel]     = useState(new Set())
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    fetch('/api/qr').then(r => r.ok ? r.json() : []).then(c => { setCodes(c); setLoading(false) }).catch(() => setLoading(false))
+  }, [])
+
+  function toggle(id) { setSel(p => { const s = new Set(p); s.has(id) ? s.delete(id) : s.add(id); return s }) }
+  const filtered = codes.filter(c => c.label.toLowerCase().includes(search.toLowerCase()))
+  const chosen = codes.filter(c => sel.has(c.id))
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="card w-full max-w-md p-6 space-y-4 max-h-[80vh] flex flex-col">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Generate QR variants</h2>
+            <p className="text-xs text-gray-400 mt-0.5">One new design per selected QR code — same layout, swapped QR.</p>
+          </div>
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-300 hover:text-gray-600 hover:bg-gray-100">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+
+        {codes.length > 5 && (
+          <input className="input-field text-sm" placeholder="Search QR codes…" value={search} onChange={e => setSearch(e.target.value)} />
+        )}
+
+        <div className="flex-1 overflow-y-auto space-y-1.5 min-h-0">
+          {loading ? (
+            <div className="flex justify-center py-6"><svg className="animate-spin w-5 h-5 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></div>
+          ) : filtered.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-6">No saved QR codes. Create some in the QR Codes tab first.</p>
+          ) : filtered.map(c => (
+            <label key={c.id} className="flex items-center gap-2.5 p-2 rounded-xl border border-gray-100 hover:bg-gray-50 cursor-pointer">
+              <input type="checkbox" checked={sel.has(c.id)} onChange={() => toggle(c.id)} className="accent-brand-600" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-800 truncate">{c.label}</p>
+                <p className="text-xs text-gray-400 font-mono">/r/{c.id}</p>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        <div className="flex gap-2 pt-1">
+          <button className="btn-secondary flex-1" onClick={onClose}>Cancel</button>
+          <button className="btn-primary flex-1" disabled={chosen.length === 0} onClick={() => onGenerate(chosen)}>
+            Create {chosen.length || ''} design{chosen.length === 1 ? '' : 's'}
+          </button>
         </div>
       </div>
     </div>
