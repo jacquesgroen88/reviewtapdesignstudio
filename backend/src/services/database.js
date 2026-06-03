@@ -1,111 +1,76 @@
-import Database from 'better-sqlite3'
-import path     from 'path'
-import { fileURLToPath } from 'url'
+import { createClient } from '@supabase/supabase-js'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DB_PATH   = path.join(__dirname, '../../data/reviewtap.db')
-
-let db = null
-
-export function getDb() {
-  if (db) return db
-
-  // Ensure data directory exists
-  import('fs').then(fs => fs.mkdirSync(path.dirname(DB_PATH), { recursive: true }))
-
-  db = new Database(DB_PATH)
-  db.pragma('journal_mode = WAL')  // better concurrent read performance
-  db.pragma('foreign_keys = ON')
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS qr_codes (
-      id          TEXT PRIMARY KEY,
-      label       TEXT NOT NULL,
-      destination TEXT NOT NULL,
-      scan_count  INTEGER NOT NULL DEFAULT 0,
-      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS order_status (
-      row_slug    TEXT PRIMARY KEY,   -- Formaloo row slug
-      status      TEXT NOT NULL DEFAULT 'pending',
-                                      -- pending | in_progress | done | skipped
-      note        TEXT,
-      updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `)
-
-  return db
+function getClient() {
+  const url = process.env.SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY
+  if (!url || !key) throw new Error('SUPABASE_URL / SUPABASE_SERVICE_KEY not set')
+  return createClient(url, key)
 }
 
-// ── QR code operations ────────────────────────────────────────────────────────
+// ── QR codes ──────────────────────────────────────────────────────────────────
 
-export function listQRCodes() {
-  return getDb().prepare('SELECT * FROM qr_codes ORDER BY created_at DESC').all()
+export async function listQRCodes() {
+  const { data, error } = await getClient()
+    .from('qr_codes').select('*').order('created_at', { ascending: false })
+  if (error) throw error
+  return data ?? []
 }
 
-export function getQRCode(id) {
-  return getDb().prepare('SELECT * FROM qr_codes WHERE id = ?').get(id)
+export async function getQRCode(id) {
+  const { data } = await getClient()
+    .from('qr_codes').select('*').eq('id', id).maybeSingle()
+  return data
 }
 
-export function createQRCode({ id, label, destination }) {
-  const stmt = getDb().prepare(`
-    INSERT INTO qr_codes (id, label, destination)
-    VALUES (@id, @label, @destination)
-  `)
-  stmt.run({ id, label, destination })
-  return getQRCode(id)
+export async function createQRCode({ id, label, destination }) {
+  const { data, error } = await getClient()
+    .from('qr_codes').insert({ id, label, destination }).select().single()
+  if (error) throw error
+  return data
 }
 
-export function updateQRCode(id, { label, destination }) {
-  const stmt = getDb().prepare(`
-    UPDATE qr_codes
-    SET label = COALESCE(@label, label),
-        destination = COALESCE(@destination, destination),
-        updated_at = datetime('now')
-    WHERE id = @id
-  `)
-  stmt.run({ id, label: label ?? null, destination: destination ?? null })
-  return getQRCode(id)
+export async function updateQRCode(id, { label, destination }) {
+  const updates = { updated_at: new Date().toISOString() }
+  if (label       !== undefined) updates.label       = label
+  if (destination !== undefined) updates.destination = destination
+  const { data, error } = await getClient()
+    .from('qr_codes').update(updates).eq('id', id).select().single()
+  if (error) throw error
+  return data
 }
 
-export function deleteQRCode(id) {
-  getDb().prepare('DELETE FROM qr_codes WHERE id = ?').run(id)
+export async function deleteQRCode(id) {
+  await getClient().from('qr_codes').delete().eq('id', id)
 }
 
-export function incrementScanCount(id) {
-  getDb().prepare(`
-    UPDATE qr_codes SET scan_count = scan_count + 1, updated_at = datetime('now') WHERE id = ?
-  `).run(id)
+export async function incrementScanCount(id) {
+  await getClient().rpc('increment_scan_count', { qr_id: id })
 }
 
-// ── Order status operations ───────────────────────────────────────────────────
-
-export function getOrderStatus(rowSlug) {
-  return getDb().prepare('SELECT * FROM order_status WHERE row_slug = ?').get(rowSlug)
+export async function bulkImport(entries) {
+  const { error } = await getClient()
+    .from('qr_codes').upsert(entries, { onConflict: 'id', ignoreDuplicates: true })
+  if (error) throw error
 }
 
-export function setOrderStatus(rowSlug, status, note = null) {
-  getDb().prepare(`
-    INSERT INTO order_status (row_slug, status, note, updated_at)
-    VALUES (@rowSlug, @status, @note, datetime('now'))
-    ON CONFLICT(row_slug) DO UPDATE SET
-      status     = @status,
-      note       = COALESCE(@note, note),
-      updated_at = datetime('now')
-  `).run({ rowSlug, status, note })
+// ── Order status ──────────────────────────────────────────────────────────────
+
+export async function getOrderStatus(rowSlug) {
+  const { data } = await getClient()
+    .from('order_status').select('*').eq('row_slug', rowSlug).maybeSingle()
+  return data
 }
 
-export function getAllOrderStatuses() {
-  return getDb().prepare('SELECT * FROM order_status').all()
+export async function setOrderStatus(rowSlug, status, note = null) {
+  const { error } = await getClient().from('order_status').upsert(
+    { row_slug: rowSlug, status, note, updated_at: new Date().toISOString() },
+    { onConflict: 'row_slug' }
+  )
+  if (error) throw error
 }
 
-export function bulkImport(entries) {
-  const insert = getDb().prepare(`
-    INSERT OR IGNORE INTO qr_codes (id, label, destination)
-    VALUES (@id, @label, @destination)
-  `)
-  const tx = getDb().transaction(rows => rows.forEach(r => insert.run(r)))
-  tx(entries)
+export async function getAllOrderStatuses() {
+  const { data, error } = await getClient().from('order_status').select('*')
+  if (error) throw error
+  return data ?? []
 }

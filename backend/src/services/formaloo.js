@@ -36,15 +36,16 @@ async function getToken() {
 
   if (!APIKEY || !SECRET) throw new Error('FORMALOO_API_KEY / FORMALOO_API_SECRET not set')
 
-  const form = new FormData()
-  form.append('grant_type', 'client_credentials')
-
-  const res = await axios.post(`${BASE}/oauth2/authorization-token/`, form, {
-    headers: {
-      'x-api-key':     APIKEY,
-      'Authorization': `Basic ${SECRET}`,
-    },
-  })
+  const res = await axios.post(`${BASE}/oauth2/authorization-token/`,
+    'grant_type=client_credentials',
+    {
+      headers: {
+        'x-api-key':     APIKEY,
+        'Authorization': `Basic ${SECRET}`,
+        'Content-Type':  'application/x-www-form-urlencoded',
+      },
+    }
+  )
 
   const token = res.data.authorization_token
   // JWT expires in ~30 days; refresh 1 day early
