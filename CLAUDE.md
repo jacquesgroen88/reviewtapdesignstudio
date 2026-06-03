@@ -185,9 +185,11 @@ Local: `backend/.env` (gitignored) holds the same. Real values are committed the
 
 ## Custom domain / QR hosting reliability (qr.reviewtap.co.za)
 Goal: a scanned QR must redirect fast and never time out.
-- **DNS**: point `qr.reviewtap.co.za` at Netlify (add as a domain alias). `/r/:code` then works on it.
-  Set `VITE_QR_BASE_URL=https://qr.reviewtap.co.za/r` so newly-generated QR codes encode that host.
-  (Existing codes already printed keep working as long as their host points at this site.)
+- **DNS**: production QR domain is **`link.reviewtap.co.za`** (CNAME → Netlify site, added as a
+  domain alias). `/r/:code` works on it. Set `VITE_QR_BASE_URL=https://link.reviewtap.co.za/r`
+  in Netlify env so newly-generated QR codes encode that host (redeploy after changing).
+  (Existing codes already printed keep working as long as their host stays pointed at this site.)
+  If on Cloudflare, keep the CNAME DNS-only (grey cloud) so Netlify manages SSL.
 - **The redirect is already hardened**: 5s DB timeout (fail fast, no hang), `Cache-Control: max-age=300`
   on the 302 (repeat scans are instant + survive brief DB hiccups), async scan counting.
 - **Biggest risk = Supabase pausing** (free tier). Mitigations in order of robustness:
