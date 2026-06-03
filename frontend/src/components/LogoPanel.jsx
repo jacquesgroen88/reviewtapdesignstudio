@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useState, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
 import QRPanel from './QRPanel.jsx'
 
@@ -6,6 +6,16 @@ let logoIdCounter = 0
 
 export default function LogoPanel({ logos, onLogosChange, onLogoReady, onLogoRemove, variantId, prefillGoogleUrl, prefillLabel }) {
   const [processingIds, setProcessingIds] = useState(new Set())
+
+  // Warm up the background-removal model in the background on mount so the
+  // first toggle is fast (the ~30MB model downloads + caches once).
+  useEffect(() => {
+    let cancelled = false
+    import('@imgly/background-removal')
+      .then(mod => { if (!cancelled && mod.preload) return mod.preload() })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   const onDrop = useCallback(async (acceptedFiles) => {
     for (const file of acceptedFiles) {
@@ -36,7 +46,7 @@ export default function LogoPanel({ logos, onLogosChange, onLogoReady, onLogoRem
         onLogoReady(updated)
       } catch (err) {
         console.error('BG removal failed:', err)
-        alert('Background removal failed. The model may still be loading — try again in a moment.')
+        alert(`Background removal failed: ${err?.message || err}. The model downloads on first use — if this is the first try, give it a moment and try again.`)
       } finally {
         setProcessingIds(prev => { const s = new Set(prev); s.delete(logoId); return s })
       }
@@ -189,9 +199,15 @@ function readFileAsDataURL(file) {
   })
 }
 
-async function removeBg(imageDataUrl) {
+async function removeBg(imageSrc) {
   // Lazy-load the heavy WASM model only when first needed
   const { removeBackground } = await import('@imgly/background-removal')
-  const blob = await removeBackground(imageDataUrl)
-  return URL.createObjectURL(blob)
+  // Fetch the source to a Blob first. This reliably handles data URLs,
+  // object URLs, and our same-origin proxied logo URLs (passing a raw
+  // string URL can fail to resolve inside the worker).
+  const resp = await fetch(imageSrc)
+  if (!resp.ok) throw new Error(`could not load image (${resp.status})`)
+  const inputBlob = await resp.blob()
+  const outBlob = await removeBackground(inputBlob)
+  return URL.createObjectURL(outBlob)
 }

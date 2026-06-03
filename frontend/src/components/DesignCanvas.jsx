@@ -100,6 +100,8 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       lastPanPoint.current = null
       canvas.setCursor(spaceRef.current ? 'grab' : 'default')
       canvas.selection = !spaceRef.current
+      hideSmartGuides(canvas)
+      canvas.renderAll()
     })
 
     // ── Keyboard shortcuts + Space pan mode ──────────────────────────────
@@ -232,7 +234,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
         borderColor: '#14b893',
         borderScaleFactor: 1.5,
       })
-      img.on('moving', () => clampToCanvas(img, W, H))
+      img.on('moving', () => { applySmartGuides(canvas, img, W, H); clampToCanvas(img, W, H) })
       canvas.add(img)
       canvas.setActiveObject(img)
       canvas.renderAll()
@@ -248,7 +250,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
         const props = { scaleX: existing.scaleX, scaleY: existing.scaleY, left: existing.left, top: existing.top, angle: existing.angle, id: entry.id }
         canvas.remove(existing)
         img.set({ ...props, cornerSize: 10, transparentCorners: false, cornerColor: '#14b893', borderColor: '#14b893', borderScaleFactor: 1.5 })
-        img.on('moving', () => clampToCanvas(img, W, H))
+        img.on('moving', () => { applySmartGuides(canvas, img, W, H); clampToCanvas(img, W, H) })
         canvas.add(img)
         canvas.setActiveObject(img)
         canvas.renderAll()
@@ -533,6 +535,15 @@ function drawGuides(canvas, product, W, H) {
     selectable: false, evented: false, hasControls: false, hasBorders: false,
     isBackground: true, isGuide: true,
   }))
+
+  // Smart centre guides — hidden until a logo is dragged near the middle
+  const guideOpts = {
+    stroke: '#ec4899', strokeWidth: 1,
+    selectable: false, evented: false, hasControls: false, hasBorders: false,
+    isBackground: true, isGuide: true, visible: false,
+  }
+  canvas.add(new fabric.Line([W / 2, 0, W / 2, H], { ...guideOpts, smartGuide: 'v' }))
+  canvas.add(new fabric.Line([0, H / 2, W, H / 2], { ...guideOpts, smartGuide: 'h' }))
 }
 
 function clampToCanvas(obj, W, H) {
@@ -542,6 +553,30 @@ function clampToCanvas(obj, W, H) {
   if (b.top  < 0)              obj.set('top',  obj.top  - b.top)
   if (b.left + b.width  > W)   obj.set('left', W - b.width  - (b.left - obj.left))
   if (b.top  + b.height > H)   obj.set('top',  H - b.height - (b.top  - obj.top))
+}
+
+// Snap an object's centre to the canvas centre lines and show the guides
+function applySmartGuides(canvas, obj, W, H) {
+  const SNAP = 7
+  const c = obj.getCenterPoint()
+  const vLine = canvas.getObjects().find(o => o.smartGuide === 'v')
+  const hLine = canvas.getObjects().find(o => o.smartGuide === 'h')
+
+  if (Math.abs(c.x - W / 2) < SNAP) {
+    obj.set('left', obj.left + (W / 2 - c.x))
+    if (vLine) vLine.set('visible', true)
+  } else if (vLine) vLine.set('visible', false)
+
+  if (Math.abs(c.y - H / 2) < SNAP) {
+    obj.set('top', obj.top + (H / 2 - c.y))
+    if (hLine) hLine.set('visible', true)
+  } else if (hLine) hLine.set('visible', false)
+}
+
+function hideSmartGuides(canvas) {
+  canvas.getObjects().forEach(o => {
+    if (o.smartGuide) o.set('visible', false)
+  })
 }
 
 function drawFallbackBackground(canvas, W, H) {

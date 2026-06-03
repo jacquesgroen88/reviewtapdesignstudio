@@ -181,10 +181,20 @@ function OrderCard({ order, onDesign, onStatusChange, isUpdating }) {
             className="w-12 h-10 object-contain rounded border border-gray-100 bg-white"
             onError={e => { e.target.style.display = 'none' }}
           />
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="text-xs font-medium text-gray-600">Logo uploaded</p>
-            <p className="text-xs text-gray-400 truncate">{order.logoUrl.split('/').pop()?.slice(0, 30)}</p>
+            <p className="text-xs text-gray-400 truncate">{order.logoUrl.split('/').pop()?.slice(0, 24)}</p>
           </div>
+          <button
+            onClick={() => editLogoInCanva(order)}
+            title="Download the original logo and open Canva to edit it"
+            className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+            </svg>
+            Canva
+          </button>
         </div>
       )}
 
@@ -237,6 +247,28 @@ function OrderCard({ order, onDesign, onStatusChange, isUpdating }) {
       </div>
     </div>
   )
+}
+
+// Download the original-quality logo (via same-origin proxy so the download
+// attribute is honoured), then open Canva so it can be dragged in to edit.
+async function editLogoInCanva(order) {
+  try {
+    const proxied = `/api/proxy-image?url=${encodeURIComponent(order.logoUrl)}`
+    const ext = (order.logoUrl.split('.').pop() || 'png').split('?')[0].slice(0, 4)
+    const name = (order.companyName || 'logo').replace(/[^a-z0-9]/gi, '_')
+    const resp = await fetch(proxied)
+    const blob = await resp.blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `${name}_logo.${ext}`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(a.href)
+  } catch (err) {
+    console.error('logo download failed', err)
+  }
+  window.open('https://www.canva.com/', '_blank', 'noopener')
 }
 
 function ProductTag({ label, icon }) {
