@@ -9,9 +9,13 @@ router.get('/', async (req, res) => {
     const page     = parseInt(req.query.page)     || 1
     const pageSize = parseInt(req.query.pageSize) || 50
     const filter   = req.query.filter             || 'all'
+    const search   = (req.query.search || '').trim().toLowerCase()
 
-    const onlyDesignNeeded = ['needs_design', 'pending', 'done'].includes(filter)
-    const { orders, count } = await fetchOrders({ page, pageSize, onlyDesignNeeded })
+    // When searching, pull a large batch so we match across all submissions
+    const onlyDesignNeeded = filter !== 'all'
+    const fetchPage     = search ? 1   : page
+    const fetchPageSize = search ? 300 : pageSize
+    const { orders, count } = await fetchOrders({ page: fetchPage, pageSize: fetchPageSize, onlyDesignNeeded })
 
     const statuses  = await getAllOrderStatuses()
     const statusMap = Object.fromEntries(statuses.map(s => [s.row_slug, s]))
@@ -24,11 +28,18 @@ router.get('/', async (req, res) => {
       hasDesign: designSlugs.has(order.rowSlug),
     }))
 
-    const filtered = (filter === 'all' || filter === 'needs_design')
-      ? enriched
-      : enriched.filter(o => o.status === filter)
+    let result
+    if (filter === 'done')              result = enriched.filter(o => o.status === 'done')
+    else if (filter === 'needs_design') result = enriched.filter(o => !['done', 'skipped'].includes(o.status))
+    else                                result = enriched   // 'all'
 
-    res.json({ orders: filtered, count, page, pageSize })
+    if (search) {
+      result = result.filter(o =>
+        (o.companyName || '').toLowerCase().includes(search) ||
+        String(o.orderNumber || '').toLowerCase().includes(search))
+    }
+
+    res.json({ orders: result, count: search ? result.length : count, page: fetchPage, pageSize: fetchPageSize })
   } catch (err) {
     console.error('Orders fetch error:', err.message)
     res.status(500).json({ error: err.message })
@@ -69,7 +80,7 @@ router.put('/:rowSlug/design', async (req, res) => {
 
 router.patch('/:rowSlug/status', async (req, res) => {
   const { status, note } = req.body
-  const valid = ['pending', 'in_progress', 'done', 'skipped']
+  const valid = ['pending', 'pending_approval', 'pending_print', 'done', 'skipped']
   if (!valid.includes(status)) return res.status(400).json({ error: `status must be one of: ${valid.join(', ')}` })
   await setOrderStatus(req.params.rowSlug, status, note)
   res.json({ ok: true, rowSlug: req.params.rowSlug, status })

@@ -357,7 +357,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   async function handleSaveDesign() {
     if (!prefill?.rowSlug) return
     setExporting(true)
-    try { await persistDesign(); await setStatus('in_progress'); showMsg('success', 'Design saved — reopen it anytime') }
+    try { await persistDesign(); await setStatus('pending_approval'); showMsg('success', 'Design saved — reopen it anytime') }
     catch (err) { showMsg('error', `Save failed: ${err.message}`) }
     finally { setExporting(false) }
   }

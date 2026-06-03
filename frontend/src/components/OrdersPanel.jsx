@@ -1,12 +1,23 @@
 import { useState, useEffect, useCallback } from 'react'
 
 const STATUS_LABELS = {
-  pending:     { label: 'Pending',     color: 'bg-amber-100 text-amber-700' },
-  in_progress: { label: 'In progress', color: 'bg-blue-100 text-blue-700' },
-  done:        { label: 'Done',        color: 'bg-brand-100 text-brand-700' },
-  skipped:     { label: 'Skipped',     color: 'bg-gray-100 text-gray-500' },
-  not_needed:  { label: 'No design',   color: 'bg-gray-100 text-gray-400' },
+  pending:          { label: 'Pending',          color: 'bg-amber-100 text-amber-700' },
+  pending_approval: { label: 'Pending Approval',  color: 'bg-blue-100 text-blue-700' },
+  pending_print:    { label: 'Pending Print',     color: 'bg-purple-100 text-purple-700' },
+  done:             { label: 'Done',              color: 'bg-brand-100 text-brand-700' },
+  skipped:          { label: 'Skipped',           color: 'bg-gray-100 text-gray-500' },
+  not_needed:       { label: 'No design',         color: 'bg-gray-100 text-gray-400' },
+  // legacy alias
+  in_progress:      { label: 'Pending Approval',  color: 'bg-blue-100 text-blue-700' },
 }
+
+const STATUS_OPTIONS = [
+  { value: 'pending',          label: 'Pending' },
+  { value: 'pending_approval', label: 'Pending Approval' },
+  { value: 'pending_print',    label: 'Pending Print' },
+  { value: 'done',             label: 'Done' },
+  { value: 'skipped',          label: 'Skip' },
+]
 
 const FILTER_TABS = [
   { id: 'needs_design', label: 'Needs designing' },
@@ -22,12 +33,15 @@ export default function OrdersPanel({ onDesignOrder }) {
   const [page,     setPage]     = useState(1)
   const [total,    setTotal]    = useState(0)
   const [updating, setUpdating] = useState(null)   // rowSlug being status-updated
+  const [search,      setSearch]      = useState('')   // input value
+  const [searchTerm,  setSearchTerm]  = useState('')   // debounced, sent to backend
   const PAGE_SIZE = 30
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const res = await fetch(`/api/orders?filter=${filter}&page=${page}&pageSize=${PAGE_SIZE}`)
+      const qs = `filter=${filter}&page=${page}&pageSize=${PAGE_SIZE}&search=${encodeURIComponent(searchTerm)}`
+      const res = await fetch(`/api/orders?${qs}`)
       if (!res.ok) throw new Error(await res.text())
       const data = await res.json()
       setOrders(data.orders)
@@ -37,10 +51,16 @@ export default function OrdersPanel({ onDesignOrder }) {
         ? 'Backend not running or Formaloo credentials not configured.'
         : e.message)
     } finally { setLoading(false) }
-  }, [filter, page])
+  }, [filter, page, searchTerm])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { setPage(1) }, [filter])
+  useEffect(() => { setPage(1) }, [filter, searchTerm])
+
+  // Debounce the search input → searchTerm
+  useEffect(() => {
+    const t = setTimeout(() => setSearchTerm(search.trim()), 350)
+    return () => clearTimeout(t)
+  }, [search])
 
   async function updateStatus(rowSlug, status) {
     setUpdating(rowSlug)
@@ -80,6 +100,26 @@ export default function OrdersPanel({ onDesignOrder }) {
         </button>
       </div>
 
+      {/* Search */}
+      <div className="relative mb-4">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-300">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input
+          type="text"
+          className="input-field pl-10"
+          placeholder="Search by company name or order number…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+        {search && (
+          <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        )}
+      </div>
+
       {/* Filter tabs */}
       <div className="flex gap-1 mb-5 border-b border-gray-100">
         {FILTER_TABS.map(tab => (
@@ -91,6 +131,11 @@ export default function OrdersPanel({ onDesignOrder }) {
             {tab.label}
           </button>
         ))}
+        {searchTerm && (
+          <span className="ml-auto self-center text-xs text-gray-400">
+            {total} result{total === 1 ? '' : 's'} for “{searchTerm}”
+          </span>
+        )}
       </div>
 
       {error && (
@@ -127,7 +172,7 @@ export default function OrdersPanel({ onDesignOrder }) {
           </div>
 
           {/* Pagination */}
-          {total > PAGE_SIZE && (
+          {!searchTerm && total > PAGE_SIZE && (
             <div className="flex items-center justify-center gap-3 mt-6">
               <button className="btn-ghost text-sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>← Prev</button>
               <span className="text-sm text-gray-500">Page {page} of {Math.ceil(total / PAGE_SIZE)}</span>
@@ -288,16 +333,15 @@ function ProductTag({ label, icon }) {
 }
 
 function StatusDropdown({ current, onChange, loading }) {
-  const options = [
-    { value: 'pending',     label: 'Pending' },
-    { value: 'in_progress', label: 'In progress' },
-    { value: 'done',        label: 'Done' },
-    { value: 'skipped',     label: 'Skip' },
-  ]
+  const options = STATUS_OPTIONS
+  // Map legacy / not_needed onto a valid option
+  const normalized = current === 'in_progress' ? 'pending_approval'
+    : current === 'not_needed' ? 'skipped'
+    : (current || 'pending')
   return (
     <div className="relative">
       <select
-        value={current === 'not_needed' ? 'skipped' : (current || 'pending')}
+        value={normalized}
         onChange={e => onChange(e.target.value)}
         disabled={loading}
         className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-600 cursor-pointer focus:outline-none focus:ring-1 focus:ring-brand-400 disabled:opacity-50"
