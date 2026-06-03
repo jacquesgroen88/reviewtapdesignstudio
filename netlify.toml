@@ -13,6 +13,13 @@
   # Native binary — let Netlify include it rather than bundle it
   external_node_modules = ["sharp"]
 
+# Image proxy → dedicated function (binary-safe; must precede /api/*)
+[[redirects]]
+  from   = "/api/proxy-image"
+  to     = "/.netlify/functions/proxy-image"
+  status = 200
+  force  = true
+
 # API → serverless Express function
 [[redirects]]
   from   = "/api/*"
