@@ -1,10 +1,20 @@
 import { createClient } from '@supabase/supabase-js'
+import ws from 'ws'
+
+let _client = null
 
 function getClient() {
+  if (_client) return _client
   const url = process.env.SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY
   if (!url || !key) throw new Error('SUPABASE_URL / SUPABASE_SERVICE_KEY not set')
-  return createClient(url, key)
+  _client = createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    // We only use REST. Provide a WebSocket impl so Realtime init doesn't
+    // throw on Node < 22 (Netlify Functions run Node 20).
+    realtime: { transport: ws },
+  })
+  return _client
 }
 
 // ── QR codes ──────────────────────────────────────────────────────────────────
