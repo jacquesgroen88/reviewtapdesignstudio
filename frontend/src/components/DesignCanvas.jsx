@@ -5,21 +5,20 @@ import { useHistory } from '../hooks/useHistory.js'
 import LogoPanel     from './LogoPanel.jsx'
 import CanvasToolbar from './CanvasToolbar.jsx'
 
-const MIN_ZOOM = 0.4
+const MIN_ZOOM = 0.5
 const MAX_ZOOM = 4.0
 const ZOOM_STEP = 0.25
 const GAP_FULL = 120   // gap between side-by-side panels, full-res px
 
 export default function DesignCanvas({ product, initialVariantId, jobName, prefill, onOrderComplete }) {
   const canvasElRef = useRef(null)
-  const workspaceRef = useRef(null)
+  const scrollRef   = useRef(null)
   const fabricRef   = useRef(null)
   const bgRefs      = useRef({})   // { faceId: fabric.Image }
   const spaceRef    = useRef(false)
   const panRef      = useRef(false)
   const lastPan     = useRef(null)
   const prefillDone = useRef(false)
-  const fitZoomRef  = useRef(1)    // fabric zoom that fits the artboard = "100%"
 
   const [variantId,   setVariantId]   = useState(prefill?.savedDesign?.variant_id || initialVariantId || product.defaultVariant)
   const [ready,       setReady]       = useState(false)
@@ -40,21 +39,18 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   for (const f of faces) { layout.push({ face: f, x: cursor }); cursor += f.width + GAP_FULL }
   const totalWfull = cursor - GAP_FULL
   const totalHfull = Math.max(...faces.map(f => f.height))
-  const W = Math.round(totalWfull * DISPLAY_SCALE)
-  const H = Math.round(totalHfull * DISPLAY_SCALE)
+  const W = Math.round(totalWfull * DISPLAY_SCALE)   // artboard display width  (zoom = 1)
+  const H = Math.round(totalHfull * DISPLAY_SCALE)   // artboard display height (zoom = 1)
 
   // ── Init ──────────────────────────────────────────────────────────────────
   useEffect(() => {
-    const ws = workspaceRef.current
     const canvas = new fabric.Canvas(canvasElRef.current, {
-      width:  ws ? ws.clientWidth  : W,
-      height: ws ? ws.clientHeight : H,
-      backgroundColor: '#eef0f3',   // the workspace behind the artboard
+      width: W, height: H,
+      backgroundColor: '#eef0f3',
       preserveObjectStacking: true, selection: true,
     })
     fabricRef.current = canvas
 
-    // Load every panel background, then guides + ready
     let loaded = 0
     layout.forEach(({ face, x }) => {
       fabric.Image.fromURL(face.template, img => {
@@ -71,15 +67,25 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       }, { crossOrigin: 'anonymous' })
     })
 
+    // Restore only the placed assets (logos/QR) at their saved positions; the
+    // backgrounds + guides are always drawn fresh for the current layout, so
+    // stale coordinates can never misalign the design.
     function finishInit(canvas) {
-      const saved = prefill?.savedDesign?.design?.canvas
-      if (saved) {
-        canvas.loadFromJSON(saved, () => {
-          rebuildAfterLoad(canvas)
-          fitToScreen(); setReady(true); snapshot()
+      const saved = prefill?.savedDesign?.design
+      if (saved?.assets?.length) {
+        let done = 0
+        const restored = []
+        saved.assets.forEach(a => {
+          fabric.Image.fromURL(a.src, img => {
+            img.set({ left: a.left, top: a.top, scaleX: a.scaleX, scaleY: a.scaleY, angle: a.angle || 0, id: a.id, isQR: !!a.isQR, ...HANDLE_STYLE })
+            img.on('moving', () => onAssetMove(img))
+            canvas.add(img)
+            restored.push({ id: a.id, name: a.isQR ? 'QR Code' : 'Logo', originalSrc: a.src, processedSrc: a.src, bgRemoved: false, isQR: !!a.isQR })
+            if (++done === saved.assets.length) { setLogos(restored); canvas.renderAll(); setReady(true); snapshot() }
+          }, { crossOrigin: 'anonymous' })
         })
       } else {
-        fitToScreen(); setReady(true); snapshot()
+        canvas.renderAll(); setReady(true); snapshot()
         if (prefill?.logoUrl && !prefillDone.current) {
           prefillDone.current = true
           const proxied = `/api/proxy-image?url=${encodeURIComponent(prefill.logoUrl)}`
@@ -89,30 +95,6 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       }
     }
 
-    // Re-fit when the workspace resizes
-    const ro = new ResizeObserver(() => {
-      const el = workspaceRef.current
-      if (!el) return
-      canvas.setDimensions({ width: el.clientWidth, height: el.clientHeight })
-      fitToScreen()
-    })
-    if (ws) ro.observe(ws)
-
-    function rebuildAfterLoad(canvas) {
-      bgRefs.current = {}
-      const assets = []
-      canvas.getObjects().forEach(o => {
-        if (o.isBackground && o.type === 'image') { bgRefs.current[o.faceId] = o }
-        else if (!o.isGuide && o.type === 'image') {
-          o.on('moving', () => onAssetMove(o))
-          const src = o.getSrc ? o.getSrc() : ''
-          assets.push({ id: o.id || `a_${assets.length}`, name: o.isQR ? 'QR Code' : 'Logo', originalSrc: src, processedSrc: src, bgRemoved: false, isQR: !!o.isQR })
-        }
-      })
-      setLogos(assets)
-    }
-
-    // Selection + history
     canvas.on('selection:created', e => setSelectedObj(e.selected?.[0] ?? null))
     canvas.on('selection:updated', e => setSelectedObj(e.selected?.[0] ?? null))
     canvas.on('selection:cleared', ()  => setSelectedObj(null))
@@ -121,26 +103,24 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     canvas.on('object:added',    snap)
     canvas.on('object:removed',  snap)
 
-    // Wheel = zoom toward the cursor (no modifier needed; it's a design canvas)
+    // Ctrl/Cmd + wheel = zoom; plain wheel = let the container scroll naturally
     canvas.on('mouse:wheel', opt => {
       const e = opt.e
+      if (!e.ctrlKey && !e.metaKey) return
       e.preventDefault(); e.stopPropagation()
-      const curMult = canvas.getZoom() / fitZoomRef.current
-      let nextMult = curMult * (e.deltaY > 0 ? 0.9 : 1.1)
-      nextMult = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextMult))
-      const p = canvas.getPointer(e, true)
-      canvas.zoomToPoint(new fabric.Point(p.x, p.y), fitZoomRef.current * nextMult)
-      setZoom(Math.round(nextMult * 100) / 100)
+      const cur = zoomRef.current
+      applyZoom(cur * (e.deltaY > 0 ? 0.9 : 1.1))
     })
-    // Space / middle-mouse pan
+
+    // Space-drag (or middle-mouse) = scroll the workspace
     canvas.on('mouse:down', opt => {
       const e = opt.e
       if (spaceRef.current || e.button === 1) { panRef.current = true; lastPan.current = { x: e.clientX, y: e.clientY }; canvas.setCursor('grabbing'); canvas.selection = false; e.preventDefault() }
     })
     canvas.on('mouse:move', opt => {
       if (!panRef.current) return
-      const e = opt.e
-      canvas.relativePan(new fabric.Point(e.clientX - lastPan.current.x, e.clientY - lastPan.current.y))
+      const e = opt.e, sc = scrollRef.current
+      if (sc) { sc.scrollLeft -= (e.clientX - lastPan.current.x); sc.scrollTop -= (e.clientY - lastPan.current.y) }
       lastPan.current = { x: e.clientX, y: e.clientY }
     })
     canvas.on('mouse:up', () => {
@@ -172,12 +152,11 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     return () => {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup',   onKeyUp)
-      ro.disconnect()
       canvas.dispose(); clear()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Swap every panel background when the variant changes (keeps assets in place)
+  // Swap panel backgrounds when the variant changes (keeps placed assets)
   useEffect(() => {
     const canvas = fabricRef.current
     if (!canvas || !ready) return
@@ -187,6 +166,10 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       if (bg) swapBgElement(bg, f.template, f.width, x).then(() => canvas.renderAll())
     })
   }, [variantId, ready]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep a ref of current zoom for the wheel handler closure
+  const zoomRef = useRef(1)
+  useEffect(() => { zoomRef.current = zoom }, [zoom])
 
   function onAssetMove(obj) {
     applySmartGuides(fabricRef.current, obj, layout)
@@ -205,8 +188,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       img.set({
         left: (f0.x + f0.face.width / 2) * DISPLAY_SCALE - (img.width * scale) / 2,
         top:  (f0.face.height / 2) * DISPLAY_SCALE - (img.height * scale) / 2,
-        scaleX: scale, scaleY: scale, id: entry.id, isQR: !!entry.isQR,
-        cornerSize: 10, transparentCorners: false, cornerColor: '#14b893', borderColor: '#14b893', borderScaleFactor: 1.5,
+        scaleX: scale, scaleY: scale, id: entry.id, isQR: !!entry.isQR, ...HANDLE_STYLE,
       })
       img.on('moving', () => onAssetMove(img))
       canvas.add(img); canvas.setActiveObject(img); canvas.renderAll()
@@ -219,7 +201,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     const existing = canvas.getObjects().find(o => o.id === entry.id)
     if (existing) {
       fabric.Image.fromURL(entry.processedSrc || entry.originalSrc, img => {
-        img.set({ scaleX: existing.scaleX, scaleY: existing.scaleY, left: existing.left, top: existing.top, angle: existing.angle, id: entry.id, isQR: !!entry.isQR, cornerSize: 10, transparentCorners: false, cornerColor: '#14b893', borderColor: '#14b893', borderScaleFactor: 1.5 })
+        img.set({ scaleX: existing.scaleX, scaleY: existing.scaleY, left: existing.left, top: existing.top, angle: existing.angle, id: entry.id, isQR: !!entry.isQR, ...HANDLE_STYLE })
         canvas.remove(existing); img.on('moving', () => onAssetMove(img)); canvas.add(img); canvas.setActiveObject(img); canvas.renderAll()
       }, { crossOrigin: 'anonymous' })
     } else { addToCanvas(entry) }
@@ -234,39 +216,31 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   function sendBackward() { const o = fabricRef.current?.getActiveObject(); if (o && !o.isBackground) { fabricRef.current.sendBackwards(o); fabricRef.current.renderAll(); snapshot() } }
   function deleteSelected() { const o = fabricRef.current?.getActiveObject(); if (o && !o.isBackground) { fabricRef.current.remove(o); fabricRef.current.discardActiveObject(); fabricRef.current.renderAll() } }
 
-  // Fit the artboard inside the workspace and centre it; this is "100%".
-  function fitToScreen() {
+  // ── Zoom: grow the canvas + scale rendering; the workspace scrolls ─────────
+  function applyZoom(z) {
     const canvas = fabricRef.current; if (!canvas) return
-    const vw = canvas.getWidth(), vh = canvas.getHeight()
-    const z0 = Math.min(vw / W, vh / H) * 0.88
-    fitZoomRef.current = z0
-    canvas.setViewportTransform([z0, 0, 0, z0, (vw - W * z0) / 2, (vh - H * z0) / 2])
-    setZoom(1)
-    spaceRef.current = false; canvas.selection = true; canvas.defaultCursor = 'default'
+    z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(z * 100) / 100))
+    canvas.setDimensions({ width: Math.round(W * z), height: Math.round(H * z) })
+    canvas.setZoom(z)
+    canvas.renderAll()
+    setZoom(z)
+    // Centre the view on the artboard after a zoom step
+    requestAnimationFrame(() => {
+      const sc = scrollRef.current
+      if (sc) { sc.scrollLeft = (sc.scrollWidth - sc.clientWidth) / 2; sc.scrollTop = (sc.scrollHeight - sc.clientHeight) / 2 }
+    })
   }
-  // Zoom relative to fit (mult of 1 == fit), toward the workspace centre
-  function applyZoom(mult) {
-    const canvas = fabricRef.current; if (!canvas) return
-    mult = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, mult))
-    canvas.zoomToPoint(new fabric.Point(canvas.getWidth() / 2, canvas.getHeight() / 2), fitZoomRef.current * mult)
-    setZoom(Math.round(mult * 100) / 100)
-  }
-  const resetZoom = fitToScreen
+  function resetZoom() { applyZoom(1) }
 
-  // ── Export ──────────────────────────────────────────────────────────────
-  // Render one face to a canvas at its exact print size by rendering the whole
-  // canvas full-res and cropping that face's panel region.
+  // ── Export: render at exact print size, crop each face's panel ─────────────
   async function exactFaceCanvas(entry, templateUrl) {
     const canvas = fabricRef.current
     canvas.discardActiveObject()
     const guides = canvas.getObjects().filter(o => o.isGuide)
     guides.forEach(g => g.set('visible', false))
 
-    // Temporarily shrink the canvas to the artboard size with identity viewport
-    // so toCanvasElement renders exactly the content (not the big workspace).
-    const savedW = canvas.getWidth(), savedH = canvas.getHeight()
-    const vpt = canvas.viewportTransform.slice()
-    canvas.setViewportTransform([1, 0, 0, 1, 0, 0])
+    const savedW = canvas.getWidth(), savedH = canvas.getHeight(), savedZoom = canvas.getZoom()
+    canvas.setZoom(1)
     canvas.setDimensions({ width: W, height: H })
 
     const bg = bgRefs.current[entry.face.id]
@@ -278,11 +252,10 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
 
     if (needSwap) await swapBgElement(bg, entry.face.template, entry.face.width, entry.x)
     canvas.setDimensions({ width: savedW, height: savedH })
-    canvas.setViewportTransform(vpt)
+    canvas.setZoom(savedZoom)
     guides.forEach(g => g.set('visible', true))
     canvas.renderAll()
 
-    // Crop this face's region (proportional, handles rounding)
     const out = document.createElement('canvas')
     out.width = entry.face.width; out.height = entry.face.height
     const sx = (entry.x / totalWfull) * full.width
@@ -367,7 +340,10 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   // ── Save / restore / complete ─────────────────────────────────────────────
   function serializeDesign() {
     const canvas = fabricRef.current
-    return { product_id: product.id, variant_id: variantId, canvas: canvas.toJSON(['id', 'isQR', 'isBackground', 'isGuide', 'smartGuide', 'faceId', 'selectable', 'evented', 'hasControls', 'hasBorders']) }
+    const assets = canvas.getObjects()
+      .filter(o => o.type === 'image' && !o.isBackground && !o.isGuide)
+      .map(o => ({ id: o.id, isQR: !!o.isQR, src: o.getSrc ? o.getSrc() : '', left: o.left, top: o.top, scaleX: o.scaleX, scaleY: o.scaleY, angle: o.angle || 0 }))
+    return { product_id: product.id, variant_id: variantId, assets }
   }
   async function persistDesign() {
     const res = await fetch(`/api/orders/${prefill.rowSlug}/design`, {
@@ -400,12 +376,13 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   function showMsg(type, text) { setExportMsg({ type, text }); setTimeout(() => setExportMsg(null), 4000) }
 
   const hasAssets = logos.length > 0
+  const zoomPct = Math.round(zoom * 100)
 
   return (
     <div className="flex h-full min-h-[calc(100vh-56px)]">
       <div className="w-64 shrink-0 border-r border-gray-100 bg-white overflow-y-auto flex flex-col">
         {faces.length > 1 && (
-          <p className="px-4 pt-3 -mb-1 text-xs text-gray-400">Drag logos & QR codes freely between {faces.map(f => f.label).join(' & ')}.</p>
+          <p className="px-4 pt-3 -mb-1 text-xs text-gray-400">{faces.map(f => f.label).join(' (left) & ')} (right) — drag assets freely between them.</p>
         )}
         <LogoPanel
           logos={logos}
@@ -443,21 +420,23 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
           />
         </div>
 
-        <div ref={workspaceRef} className="flex-1 relative bg-gray-100 overflow-hidden">
-          {!ready && (
-            <div className="absolute inset-0 flex items-center justify-center z-10">
-              <svg className="animate-spin w-8 h-8 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+        <div ref={scrollRef} className="flex-1 bg-gray-100 overflow-auto">
+          <div className="min-h-full min-w-full flex items-center justify-center p-10">
+            <div className="relative">
+              {!ready && (
+                <div className="absolute inset-0 flex items-center justify-center bg-white/70 z-10">
+                  <svg className="animate-spin w-8 h-8 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                </div>
+              )}
+              <canvas ref={canvasElRef} className="shadow-2xl" />
             </div>
-          )}
-          <canvas ref={canvasElRef} />
-          <span className="absolute bottom-3 left-1/2 -translate-x-1/2 text-xs text-gray-400 bg-white/70 px-2 py-0.5 rounded-full pointer-events-none">
-            Scroll to zoom · Space-drag to pan
-          </span>
+          </div>
         </div>
 
         <div className="border-t border-gray-100 bg-white px-5 py-3 flex items-center gap-4">
           <p className="text-sm text-gray-400 shrink-0">
             {!hasAssets ? 'Add a logo or QR code to get started.' : `${logos.length} item${logos.length > 1 ? 's' : ''} placed.`}
+            <span className="ml-2 text-gray-300">· {zoomPct}% · Ctrl+scroll to zoom, Space-drag to pan</span>
           </p>
           {exportMsg && (
             <span className={`text-xs font-medium px-3 py-1.5 rounded-lg shrink-0 ${exportMsg.type === 'success' ? 'bg-brand-50 text-brand-700' : 'bg-red-50 text-red-600'}`}>{exportMsg.text}</span>
@@ -500,20 +479,13 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+const HANDLE_STYLE = { cornerSize: 10, transparentCorners: false, cornerColor: '#14b893', borderColor: '#14b893', borderScaleFactor: 1.5 }
+
 function drawGuides(canvas, layout, safeMargin) {
-  const multi = layout.length > 1
   layout.forEach(({ face, x }) => {
     const ox = x * DISPLAY_SCALE
     const pw = face.width * DISPLAY_SCALE
     const ph = face.height * DISPLAY_SCALE
-    if (multi && face.label) {
-      canvas.add(new fabric.Text(face.label, {
-        left: ox + pw / 2, top: -30, originX: 'center', originY: 'bottom',
-        fontSize: 13, fill: '#9ca3af', fontFamily: 'Inter, sans-serif',
-        selectable: false, evented: false, hasControls: false, hasBorders: false,
-        isBackground: true, isGuide: true, faceId: face.id,
-      }))
-    }
     if (safeMargin) {
       const safe = safeMargin * DISPLAY_SCALE
       canvas.add(new fabric.Rect({
@@ -532,7 +504,6 @@ function applySmartGuides(canvas, obj, layout) {
   const SNAP = 7
   const c = obj.getCenterPoint()
   hideSmartGuides(canvas)
-  // Which panel is the object's centre over?
   const entry = layout.find(({ face, x }) => {
     const ox = x * DISPLAY_SCALE, pw = face.width * DISPLAY_SCALE
     return c.x >= ox && c.x <= ox + pw
@@ -553,8 +524,7 @@ function hideSmartGuides(canvas) {
 
 function clampToCanvas(obj, W, H) {
   obj.setCoords()
-  // absolute=true → bounding rect in content space, ignoring viewport zoom/pan
-  const b = obj.getBoundingRect(true)
+  const b = obj.getBoundingRect(true)   // absolute = content coords (ignores zoom)
   if (b.left < 0)            obj.set('left', obj.left - b.left)
   if (b.top  < 0)            obj.set('top',  obj.top  - b.top)
   if (b.left + b.width  > W) obj.set('left', W - b.width  - (b.left - obj.left))
