@@ -29,16 +29,16 @@ via `frontend/vite.config.js`. On Netlify, those paths hit functions instead.
   `session` (the active design) and routes "Design this order" → prefilled canvas.
 - `components/OrdersPanel.jsx` — Formaloo inbox. Filters (needs_design / all / done),
   per-order status dropdown, "Design" button. Logo thumbnail uses raw S3 URL (plain img OK).
-- `components/DesignCanvas.jsx` — **orchestrator**. Reads the active variant's `faces`,
-  renders one `FaceCanvas` per face (Stand = 1, Card = Front+Back side by side), holds a
-  shared toolbar + asset panel that act on the *focused* face. Owns variant switch, per-face
-  logos/history/selection state, and export (iterates faces).
-- `components/FaceCanvas.jsx` — **one editable face**. Self-contained Fabric canvas: background,
-  guides, smart-centre guides, zoom/pan, undo/redo (own useHistory), add/replace/remove asset,
-  `buildExportCanvas(templateUrl)`. Exposes an imperative API via `registerApi(faceId, api)`.
-  Keyed by `face.id` so switching white↔black swaps the bg in place (keeps placed logos).
+- `components/DesignCanvas.jsx` — **single-canvas editor**. ONE Fabric canvas holds all of a
+  variant's `faces` as side-by-side background panels (Stand = 1 panel; Card = Front+Back with a
+  `GAP_FULL` px gap). Assets are a single `logos` array and can be dragged **freely across panels**
+  (clamp is to the whole canvas, not per-panel). Owns variant switch, zoom/pan, one shared
+  history, smart-centre guides (snap to whichever panel the asset's centre is over), and export.
+  Export renders the full canvas at `1/DISPLAY_SCALE` then **crops each panel's region**
+  (`exactFaceCanvas`) to produce per-face PDF pages / TIFF / Drive files. (There is no FaceCanvas
+  component anymore — that per-face split was replaced so assets can move between front and back.)
 - `components/LogoPanel.jsx` — logo upload (dropzone), browser-side BG removal, hosts QRPanel.
-  Operates on the focused face (DesignCanvas routes onLogoReady/onLogoRemove to the active API).
+  Adds/removes on the single canvas (one logos array).
 - `components/QRPanel.jsx` — create new dynamic QR (saves to backend) OR pick a saved one,
   add to canvas. Colours auto-set from stand variant.
 - `components/AdminPanel.jsx` — QR CRUD, bulk import, copy URL, download QR PNG, scan counts.
@@ -160,10 +160,12 @@ button becomes **Edit** and the order stays fully reusable.
    export multiplies back by `1/DISPLAY_SCALE`. Each `face` carries its own width/height.
 
 9. **Faces model.** Every variant has a `faces[]` array (products.js). Stand variants have one
-   face (`main`); Card variants have `front` + `back`. DesignCanvas renders a FaceCanvas per
-   face and exports per face: Mockup PDF = one page per face; Print TIFF / Drive = one file per
-   face (named `..._Front.tiff` / `..._Back.tiff`). `backend/routes/upload.js` no longer resizes
-   (faces vary) — it just tags 300 DPI and converts the incoming full-res PNG to LZW TIFF.
+   face (`main`); Card variants have `front` + `back`, rendered as side-by-side panels on ONE
+   canvas so assets drag between them. Export crops each panel: Mockup PDF = one page per face;
+   Print TIFF / Drive = one file per face (`..._Front.tiff` / `..._Back.tiff`).
+   `backend/routes/upload.js` doesn't resize — it tags 300 DPI and converts the PNG to LZW TIFF.
+   Saved-design schema: `{ product_id, variant_id, canvas: <full fabric JSON> }` (single canvas;
+   the old per-face `{faces:{...}}` schema is ignored on load → falls back to prefill).
 
 10. **Export must use exact face dimensions.** `DISPLAY_SCALE`-rounded canvas dims don't divide
     back evenly, so `toCanvasElement(1/DISPLAY_SCALE)` is a few px off the true face size. That

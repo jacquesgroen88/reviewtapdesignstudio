@@ -1,84 +1,266 @@
-import { useState, useRef, useEffect } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { fabric } from 'fabric'
+import { DISPLAY_SCALE } from '../lib/products.js'
+import { useHistory } from '../hooks/useHistory.js'
 import LogoPanel     from './LogoPanel.jsx'
 import CanvasToolbar from './CanvasToolbar.jsx'
-import FaceCanvas    from './FaceCanvas.jsx'
 
+const MIN_ZOOM = 0.4
+const MAX_ZOOM = 4.0
 const ZOOM_STEP = 0.25
+const GAP_FULL = 120   // gap between side-by-side panels, full-res px
 
 export default function DesignCanvas({ product, initialVariantId, jobName, prefill, onOrderComplete }) {
-  const [variantId, setVariantId] = useState(prefill?.savedDesign?.variant_id || initialVariantId || product.defaultVariant)
+  const canvasElRef = useRef(null)
+  const fabricRef   = useRef(null)
+  const bgRefs      = useRef({})   // { faceId: fabric.Image }
+  const spaceRef    = useRef(false)
+  const panRef      = useRef(false)
+  const lastPan     = useRef(null)
+  const prefillDone = useRef(false)
+
+  const [variantId,   setVariantId]   = useState(prefill?.savedDesign?.variant_id || initialVariantId || product.defaultVariant)
+  const [ready,       setReady]       = useState(false)
+  const [selectedObj, setSelectedObj] = useState(null)
+  const [logos,       setLogos]       = useState([])
+  const [zoom,        setZoom]        = useState(1)
+  const [exporting,   setExporting]   = useState(false)
+  const [exportMsg,   setExportMsg]   = useState(null)
+
+  const { snapshot, undo, redo, canUndo, canRedo, clear } = useHistory(fabricRef)
+
   const variant = product.templateVariants.find(v => v.id === variantId) || product.templateVariants[0]
   const faces   = variant.faces
 
-  const [activeFaceId, setActiveFaceId] = useState(faces[0].id)
-  const [logosByFace,  setLogosByFace]  = useState({})   // { faceId: [entries] }
-  const [histByFace,   setHistByFace]   = useState({})   // { faceId: {canUndo,canRedo} }
-  const [selByFace,    setSelByFace]    = useState({})   // { faceId: bool }
-  const [zoom,         setZoom]         = useState(1)
-  const [exporting,    setExporting]    = useState(false)
-  const [exportMsg,    setExportMsg]    = useState(null)
+  // Lay faces out left-to-right in full-res coords
+  const layout = []
+  let cursor = 0
+  for (const f of faces) { layout.push({ face: f, x: cursor }); cursor += f.width + GAP_FULL }
+  const totalWfull = cursor - GAP_FULL
+  const totalHfull = Math.max(...faces.map(f => f.height))
+  const W = Math.round(totalWfull * DISPLAY_SCALE)
+  const H = Math.round(totalHfull * DISPLAY_SCALE)
 
-  const apisRef      = useRef({})   // { faceId: api }
-  const prefillDone  = useRef(false)
-
-  // Keep activeFaceId valid if the variant's faces change
+  // ── Init ──────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!faces.find(f => f.id === activeFaceId)) setActiveFaceId(faces[0].id)
-  }, [variantId]) // eslint-disable-line react-hooks/exhaustive-deps
+    const canvas = new fabric.Canvas(canvasElRef.current, {
+      width: W, height: H,
+      backgroundColor: '#eef0f3',   // shows in the gap between panels
+      preserveObjectStacking: true, selection: true,
+    })
+    fabricRef.current = canvas
 
-  function registerApi(faceId, api) {
-    if (api) {
-      apisRef.current[faceId] = api
-      const saved = prefill?.savedDesign
-      if (saved?.design?.faces?.[faceId]) {
-        // Restore the previously-saved canvas for this face
-        api.importState(saved.design.faces[faceId]).then(assets => {
-          setLogosByFace(prev => ({ ...prev, [faceId]: assets }))
+    // Load every panel background, then guides + ready
+    let loaded = 0
+    layout.forEach(({ face, x }) => {
+      fabric.Image.fromURL(face.template, img => {
+        if (img && img.width) {
+          img.scaleToWidth(face.width * DISPLAY_SCALE)
+          img.set({ left: x * DISPLAY_SCALE, top: 0, selectable: false, evented: false, hasControls: false, hasBorders: false, isBackground: true, faceId: face.id })
+          bgRefs.current[face.id] = img
+          canvas.add(img); canvas.sendToBack(img)
+        }
+        if (++loaded === layout.length) {
+          drawGuides(canvas, layout, product.safeMargin)
+          // Restore a saved design, else prefill the logo
+          finishInit(canvas)
+        }
+      }, { crossOrigin: 'anonymous' })
+    })
+
+    function finishInit(canvas) {
+      const saved = prefill?.savedDesign?.design?.canvas
+      if (saved) {
+        canvas.loadFromJSON(saved, () => {
+          rebuildAfterLoad(canvas)
+          canvas.renderAll(); setReady(true); snapshot()
         })
-      } else if (faceId === faces[0].id && prefill?.logoUrl && !prefillDone.current) {
-        // Fresh design — prefill the logo onto the first face
-        prefillDone.current = true
-        const proxied = `/api/proxy-image?url=${encodeURIComponent(prefill.logoUrl)}`
-        const entry = { id: 'prefill_logo', name: `${prefill.companyName || 'Logo'}.png`, originalSrc: proxied, processedSrc: proxied, bgRemoved: false }
-        setLogosByFace(prev => ({ ...prev, [faceId]: [entry] }))
-        api.addOrReplace(entry)
+      } else {
+        canvas.renderAll(); setReady(true); snapshot()
+        if (prefill?.logoUrl && !prefillDone.current) {
+          prefillDone.current = true
+          const proxied = `/api/proxy-image?url=${encodeURIComponent(prefill.logoUrl)}`
+          const entry = { id: 'prefill_logo', name: `${prefill.companyName || 'Logo'}.png`, originalSrc: proxied, processedSrc: proxied, bgRemoved: false }
+          setLogos([entry]); addToCanvas(entry)
+        }
       }
-    } else {
-      delete apisRef.current[faceId]
     }
+
+    function rebuildAfterLoad(canvas) {
+      bgRefs.current = {}
+      const assets = []
+      canvas.getObjects().forEach(o => {
+        if (o.isBackground && o.type === 'image') { bgRefs.current[o.faceId] = o }
+        else if (!o.isGuide && o.type === 'image') {
+          o.on('moving', () => onAssetMove(o))
+          const src = o.getSrc ? o.getSrc() : ''
+          assets.push({ id: o.id || `a_${assets.length}`, name: o.isQR ? 'QR Code' : 'Logo', originalSrc: src, processedSrc: src, bgRemoved: false, isQR: !!o.isQR })
+        }
+      })
+      setLogos(assets)
+    }
+
+    // Selection + history
+    canvas.on('selection:created', e => setSelectedObj(e.selected?.[0] ?? null))
+    canvas.on('selection:updated', e => setSelectedObj(e.selected?.[0] ?? null))
+    canvas.on('selection:cleared', ()  => setSelectedObj(null))
+    const snap = () => snapshot()
+    canvas.on('object:modified', snap)
+    canvas.on('object:added',    snap)
+    canvas.on('object:removed',  snap)
+
+    // Ctrl/Cmd + wheel zoom
+    canvas.on('mouse:wheel', opt => {
+      const e = opt.e
+      if (!e.ctrlKey && !e.metaKey) return
+      e.preventDefault(); e.stopPropagation()
+      let next = canvas.getZoom() * (e.deltaY > 0 ? 0.92 : 1.08)
+      next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next))
+      canvas.zoomToPoint(new fabric.Point(opt.pointer?.x ?? W / 2, opt.pointer?.y ?? H / 2), next)
+      setZoom(Math.round(next * 100) / 100)
+    })
+    // Space / middle-mouse pan
+    canvas.on('mouse:down', opt => {
+      const e = opt.e
+      if (spaceRef.current || e.button === 1) { panRef.current = true; lastPan.current = { x: e.clientX, y: e.clientY }; canvas.setCursor('grabbing'); canvas.selection = false; e.preventDefault() }
+    })
+    canvas.on('mouse:move', opt => {
+      if (!panRef.current) return
+      const e = opt.e
+      canvas.relativePan(new fabric.Point(e.clientX - lastPan.current.x, e.clientY - lastPan.current.y))
+      lastPan.current = { x: e.clientX, y: e.clientY }
+    })
+    canvas.on('mouse:up', () => {
+      panRef.current = false; lastPan.current = null
+      canvas.setCursor(spaceRef.current ? 'grab' : 'default'); canvas.selection = !spaceRef.current
+      hideSmartGuides(canvas); canvas.renderAll()
+    })
+
+    function onKeyDown(e) {
+      if (e.key === ' ' && !e.target.matches('input,textarea')) {
+        e.preventDefault()
+        if (!spaceRef.current) { spaceRef.current = true; canvas.defaultCursor = 'grab'; canvas.setCursor('grab'); canvas.selection = false }
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo() }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) { e.preventDefault(); redo() }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (e.target.matches('input,textarea')) return
+        const o = canvas.getActiveObject()
+        if (o && !o.isBackground) { canvas.remove(o); canvas.discardActiveObject(); canvas.renderAll() }
+      }
+    }
+    function onKeyUp(e) {
+      if (e.key === ' ') { spaceRef.current = false; canvas.defaultCursor = 'default'; canvas.setCursor('default'); canvas.selection = true; panRef.current = false }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup',   onKeyUp)
+
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup',   onKeyUp)
+      canvas.dispose(); clear()
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Swap every panel background when the variant changes (keeps assets in place)
+  useEffect(() => {
+    const canvas = fabricRef.current
+    if (!canvas || !ready) return
+    faces.forEach(f => {
+      const bg = bgRefs.current[f.id]
+      const x  = layout.find(l => l.face.id === f.id)?.x ?? 0
+      if (bg) swapBgElement(bg, f.template, f.width, x).then(() => canvas.renderAll())
+    })
+  }, [variantId, ready]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  function onAssetMove(obj) {
+    applySmartGuides(fabricRef.current, obj, layout)
+    clampToCanvas(obj, W, H)
   }
 
-  const activeApi   = apisRef.current[activeFaceId]
-  const activeLogos = logosByFace[activeFaceId] || []
+  const addToCanvas = useCallback((entry) => {
+    const canvas = fabricRef.current
+    if (!canvas) return
+    const src = entry.processedSrc || entry.originalSrc
+    fabric.Image.fromURL(src, img => {
+      const f0 = layout[0]
+      const maxW = f0.face.width * DISPLAY_SCALE * 0.55
+      const maxH = f0.face.height * DISPLAY_SCALE * 0.55
+      const scale = Math.min(maxW / img.width, maxH / img.height, 1)
+      img.set({
+        left: (f0.x + f0.face.width / 2) * DISPLAY_SCALE - (img.width * scale) / 2,
+        top:  (f0.face.height / 2) * DISPLAY_SCALE - (img.height * scale) / 2,
+        scaleX: scale, scaleY: scale, id: entry.id, isQR: !!entry.isQR,
+        cornerSize: 10, transparentCorners: false, cornerColor: '#14b893', borderColor: '#14b893', borderScaleFactor: 1.5,
+      })
+      img.on('moving', () => onAssetMove(img))
+      canvas.add(img); canvas.setActiveObject(img); canvas.renderAll()
+    }, { crossOrigin: 'anonymous' })
+  }, [layout]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Asset panel operates on the active face
-  const setActiveLogos = (updater) => setLogosByFace(prev => {
-    const cur = prev[activeFaceId] || []
-    const next = typeof updater === 'function' ? updater(cur) : updater
-    return { ...prev, [activeFaceId]: next }
-  })
-  function handleLogoReady(entry) { apisRef.current[activeFaceId]?.addOrReplace(entry) }
-  function handleLogoRemove(id)   { apisRef.current[activeFaceId]?.removeAsset(id) }
-
-  function activateFace(id) {
-    setActiveFaceId(id)
-    const api = apisRef.current[id]
-    if (api) setZoom(Math.round(api.getZoom() * 100) / 100)
+  function handleLogoReady(entry) {
+    const canvas = fabricRef.current
+    if (!canvas) return
+    const existing = canvas.getObjects().find(o => o.id === entry.id)
+    if (existing) {
+      fabric.Image.fromURL(entry.processedSrc || entry.originalSrc, img => {
+        img.set({ scaleX: existing.scaleX, scaleY: existing.scaleY, left: existing.left, top: existing.top, angle: existing.angle, id: entry.id, isQR: !!entry.isQR, cornerSize: 10, transparentCorners: false, cornerColor: '#14b893', borderColor: '#14b893', borderScaleFactor: 1.5 })
+        canvas.remove(existing); img.on('moving', () => onAssetMove(img)); canvas.add(img); canvas.setActiveObject(img); canvas.renderAll()
+      }, { crossOrigin: 'anonymous' })
+    } else { addToCanvas(entry) }
+  }
+  function handleLogoRemove(id) {
+    const canvas = fabricRef.current; if (!canvas) return
+    const o = canvas.getObjects().find(x => x.id === id)
+    if (o) { canvas.remove(o); canvas.renderAll() }
   }
 
-  // Zoom routes to the active face
-  function applyZoom(z) { const a = apisRef.current[activeFaceId]; if (a) setZoom(a.setZoom(z)) }
-  function resetZoom()  { const a = apisRef.current[activeFaceId]; if (a) { a.resetZoom(); setZoom(1) } }
+  function bringForward() { const o = fabricRef.current?.getActiveObject(); if (o) { fabricRef.current.bringForward(o); fabricRef.current.renderAll(); snapshot() } }
+  function sendBackward() { const o = fabricRef.current?.getActiveObject(); if (o && !o.isBackground) { fabricRef.current.sendBackwards(o); fabricRef.current.renderAll(); snapshot() } }
+  function deleteSelected() { const o = fabricRef.current?.getActiveObject(); if (o && !o.isBackground) { fabricRef.current.remove(o); fabricRef.current.discardActiveObject(); fabricRef.current.renderAll() } }
+
+  function applyZoom(z) {
+    const canvas = fabricRef.current; if (!canvas) return
+    z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))
+    canvas.zoomToPoint(new fabric.Point(W / 2, H / 2), z); setZoom(Math.round(z * 100) / 100)
+  }
+  function resetZoom() {
+    const canvas = fabricRef.current; if (!canvas) return
+    canvas.setZoom(1); canvas.setViewportTransform([1, 0, 0, 1, 0, 0]); setZoom(1)
+    spaceRef.current = false; canvas.selection = true
+  }
 
   // ── Export ──────────────────────────────────────────────────────────────
-  // Render a face to a canvas at EXACTLY its print dimensions, so the PDF page
-  // aspect ratio matches perfectly (no stretch/shift) and the TIFF is exact size.
-  async function exactCanvas(api, templateUrl, w, h) {
-    const cv = await api.buildExportCanvas(templateUrl)
-    if (cv.width === w && cv.height === h) return cv
+  // Render one face to a canvas at its exact print size by rendering the whole
+  // canvas full-res and cropping that face's panel region.
+  async function exactFaceCanvas(entry, templateUrl) {
+    const canvas = fabricRef.current
+    canvas.discardActiveObject()
+    const guides = canvas.getObjects().filter(o => o.isGuide)
+    guides.forEach(g => g.set('visible', false))
+    const vpt = canvas.viewportTransform.slice()
+    canvas.setViewportTransform([1, 0, 0, 1, 0, 0])
+
+    const bg = bgRefs.current[entry.face.id]
+    const needSwap = bg && templateUrl && templateUrl !== entry.face.template
+    if (needSwap) await swapBgElement(bg, templateUrl, entry.face.width, entry.x)
+
+    canvas.renderAll()
+    const full = canvas.toCanvasElement(1 / DISPLAY_SCALE)
+
+    if (needSwap) await swapBgElement(bg, entry.face.template, entry.face.width, entry.x)
+    canvas.setViewportTransform(vpt)
+    guides.forEach(g => g.set('visible', true))
+    canvas.renderAll()
+
+    // Crop this face's region (proportional, handles rounding)
     const out = document.createElement('canvas')
-    out.width = w; out.height = h
-    out.getContext('2d').drawImage(cv, 0, 0, w, h)
+    out.width = entry.face.width; out.height = entry.face.height
+    const sx = (entry.x / totalWfull) * full.width
+    const sw = (entry.face.width / totalWfull) * full.width
+    const sh = (entry.face.height / totalHfull) * full.height
+    out.getContext('2d').drawImage(full, sx, 0, sw, sh, 0, 0, entry.face.width, entry.face.height)
     return out
   }
 
@@ -87,18 +269,14 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     try {
       const { jsPDF } = await import('jspdf')
       let pdf
-      for (let i = 0; i < faces.length; i++) {
-        const f = faces[i]
-        const api = apisRef.current[f.id]
-        const cv = await exactCanvas(api, f.mockupTemplate || f.template, f.width, f.height)
-        const wmm = f.width / 11.811, hmm = f.height / 11.811
+      for (let i = 0; i < layout.length; i++) {
+        const e = layout[i]
+        const cv = await exactFaceCanvas(e, e.face.mockupTemplate || e.face.template)
+        const wmm = e.face.width / 11.811, hmm = e.face.height / 11.811
         const orient = wmm > hmm ? 'landscape' : 'portrait'
         if (i === 0) pdf = new jsPDF({ orientation: orient, unit: 'mm', format: [wmm, hmm] })
         else pdf.addPage([wmm, hmm], orient)
-        // Add to the ACTUAL page size jsPDF created (avoids orientation/format
-        // swap quirks that shifted the logo/QR).
-        const pw = pdf.internal.pageSize.getWidth()
-        const ph = pdf.internal.pageSize.getHeight()
+        const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight()
         pdf.addImage(cv.toDataURL('image/png', 1), 'PNG', 0, 0, pw, ph)
       }
       pdf.save(buildFilename(jobName, variant.label, '', 'pdf'))
@@ -107,21 +285,15 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     finally { setExporting(false) }
   }
 
-  // JPEG client preview — flattened on a clean white background
   async function handleDownloadJPEG() {
     setExporting(true)
     try {
-      for (const f of faces) {
-        const api = apisRef.current[f.id]
-        const cv = await exactCanvas(api, f.mockupTemplate || f.template, f.width, f.height)
+      for (const e of layout) {
+        const cv = await exactFaceCanvas(e, e.face.mockupTemplate || e.face.template)
         const out = document.createElement('canvas')
         out.width = cv.width; out.height = cv.height
-        const ctx = out.getContext('2d')
-        ctx.fillStyle = '#ffffff'
-        ctx.fillRect(0, 0, out.width, out.height)
-        ctx.drawImage(cv, 0, 0)
-        const dataUrl = out.toDataURL('image/jpeg', 0.92)
-        downloadBlob(dataURLtoBlob(dataUrl), buildFilename(jobName, variant.label, faces.length > 1 ? f.label : '', 'jpg'))
+        const ctx = out.getContext('2d'); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, out.width, out.height); ctx.drawImage(cv, 0, 0)
+        downloadBlob(dataURLtoBlob(out.toDataURL('image/jpeg', 0.92)), buildFilename(jobName, variant.label, layout.length > 1 ? e.face.label : '', 'jpg'))
       }
       showMsg('success', 'JPEG preview downloaded')
     } catch (err) { console.error(err); showMsg('error', 'JPEG export failed') }
@@ -132,12 +304,11 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     setExporting(true)
     try {
       const UTIF = (await import('utif')).default
-      for (const f of faces) {
-        const api = apisRef.current[f.id]
-        const cv = await exactCanvas(api, f.template, f.width, f.height)
+      for (const e of layout) {
+        const cv = await exactFaceCanvas(e, e.face.template)
         const id = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height)
         const buf = UTIF.encodeImage(id.data.buffer, cv.width, cv.height, { t282: [300], t283: [300], t296: [2] })
-        downloadBlob(new Blob([buf], { type: 'image/tiff' }), buildFilename(jobName, variant.label, faces.length > 1 ? f.label : '', 'tiff'))
+        downloadBlob(new Blob([buf], { type: 'image/tiff' }), buildFilename(jobName, variant.label, layout.length > 1 ? e.face.label : '', 'tiff'))
       }
       showMsg('success', 'Print TIFF downloaded')
     } catch (err) { console.error(err); showMsg('error', 'TIFF export failed') }
@@ -147,11 +318,10 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   async function handleUploadToDrive() {
     setExporting(true)
     try {
-      for (const f of faces) {
-        const api = apisRef.current[f.id]
-        const cv = await exactCanvas(api, f.template, f.width, f.height)
+      for (const e of layout) {
+        const cv = await exactFaceCanvas(e, e.face.template)
         const blob = dataURLtoBlob(cv.toDataURL('image/png', 1))
-        const filename = buildFilename(jobName, variant.label, faces.length > 1 ? f.label : '', 'tiff')
+        const filename = buildFilename(jobName, variant.label, layout.length > 1 ? e.face.label : '', 'tiff')
         const form = new FormData()
         form.append('file', blob, filename)
         form.append('businessName', jobName || 'ReviewTap')
@@ -166,10 +336,10 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     finally { setExporting(false) }
   }
 
+  // ── Save / restore / complete ─────────────────────────────────────────────
   function serializeDesign() {
-    const facesJson = {}
-    for (const f of faces) { const api = apisRef.current[f.id]; if (api) facesJson[f.id] = api.exportState() }
-    return { product_id: product.id, variant_id: variantId, faces: facesJson }
+    const canvas = fabricRef.current
+    return { product_id: product.id, variant_id: variantId, canvas: canvas.toJSON(['id', 'isQR', 'isBackground', 'isGuide', 'smartGuide', 'faceId', 'selectable', 'evented', 'hasControls', 'hasBorders']) }
   }
   async function persistDesign() {
     const res = await fetch(`/api/orders/${prefill.rowSlug}/design`, {
@@ -180,54 +350,38 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   }
   async function setStatus(status) {
     const res = await fetch(`/api/orders/${prefill.rowSlug}/status`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
     })
     if (!res.ok) throw new Error(await res.text())
   }
-
   async function handleSaveDesign() {
     if (!prefill?.rowSlug) return
     setExporting(true)
-    try {
-      await persistDesign()
-      await setStatus('in_progress')
-      showMsg('success', 'Design saved — you can reopen it anytime')
-    } catch (err) { showMsg('error', `Save failed: ${err.message}`) }
+    try { await persistDesign(); await setStatus('in_progress'); showMsg('success', 'Design saved — reopen it anytime') }
+    catch (err) { showMsg('error', `Save failed: ${err.message}`) }
     finally { setExporting(false) }
   }
-
   async function handleMarkComplete() {
     if (!prefill?.rowSlug) return
     setExporting(true)
-    try {
-      await persistDesign()
-      await setStatus('done')
-      showMsg('success', 'Saved & marked complete')
-      setTimeout(() => onOrderComplete?.(), 700)
-    } catch (err) { showMsg('error', `Could not save: ${err.message}`) }
+    try { await persistDesign(); await setStatus('done'); showMsg('success', 'Saved & marked complete'); setTimeout(() => onOrderComplete?.(), 700) }
+    catch (err) { showMsg('error', `Could not save: ${err.message}`) }
     finally { setExporting(false) }
   }
 
   function showMsg(type, text) { setExportMsg({ type, text }); setTimeout(() => setExportMsg(null), 4000) }
 
-  const hasAssets = Object.values(logosByFace).some(a => a && a.length)
-  const hist = histByFace[activeFaceId] || {}
+  const hasAssets = logos.length > 0
 
   return (
     <div className="flex h-full min-h-[calc(100vh-56px)]">
-      {/* Left panel */}
       <div className="w-64 shrink-0 border-r border-gray-100 bg-white overflow-y-auto flex flex-col">
         {faces.length > 1 && (
-          <div className="px-4 pt-3 -mb-1 flex items-center gap-1.5 text-xs text-gray-400">
-            Editing:
-            <span className="font-semibold text-brand-600">{faces.find(f => f.id === activeFaceId)?.label}</span>
-            <span className="text-gray-300">· click a card to switch</span>
-          </div>
+          <p className="px-4 pt-3 -mb-1 text-xs text-gray-400">Drag logos & QR codes freely between {faces.map(f => f.label).join(' & ')}.</p>
         )}
         <LogoPanel
-          logos={activeLogos}
-          onLogosChange={setActiveLogos}
+          logos={logos}
+          onLogosChange={setLogos}
           onLogoReady={handleLogoReady}
           onLogoRemove={handleLogoRemove}
           variantId={variantId}
@@ -236,9 +390,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
         />
       </div>
 
-      {/* Canvas area */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Toolbar */}
         <div className="border-b border-gray-100 bg-white flex items-center">
           {product.templateVariants.length > 1 && (
             <div className="flex items-center border-r border-gray-100 px-3 py-2 gap-1.5 shrink-0">
@@ -253,45 +405,40 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
             </div>
           )}
           <CanvasToolbar
-            canUndo={!!hist.canUndo} canRedo={!!hist.canRedo}
-            onUndo={() => activeApi?.undo()} onRedo={() => activeApi?.redo()}
-            selectedObj={selByFace[activeFaceId] ? {} : null}
-            onBringForward={() => activeApi?.bringForward()}
-            onSendBackward={() => activeApi?.sendBackward()}
-            onDeleteSelected={() => activeApi?.deleteSelected()}
+            canUndo={canUndo()} canRedo={canRedo()}
+            onUndo={undo} onRedo={redo}
+            selectedObj={selectedObj}
+            onBringForward={bringForward} onSendBackward={sendBackward} onDeleteSelected={deleteSelected}
             zoom={zoom}
-            onZoomIn={() => applyZoom(zoom + ZOOM_STEP)}
-            onZoomOut={() => applyZoom(zoom - ZOOM_STEP)}
-            onZoomReset={resetZoom}
-            onFitScreen={resetZoom}
+            onZoomIn={() => applyZoom(zoom + ZOOM_STEP)} onZoomOut={() => applyZoom(zoom - ZOOM_STEP)}
+            onZoomReset={resetZoom} onFitScreen={resetZoom}
           />
         </div>
 
-        {/* Faces */}
-        <div className="flex-1 flex items-center justify-center gap-8 p-8 bg-gray-100 overflow-auto">
-          {faces.map(face => (
-            <FaceCanvas
-              key={face.id}
-              face={face}
-              safeMargin={product.safeMargin}
-              active={activeFaceId === face.id}
-              onActivate={activateFace}
-              onSelectionChange={(fid, sel) => setSelByFace(p => ({ ...p, [fid]: sel }))}
-              onHistoryChange={(fid, u, r) => setHistByFace(p => ({ ...p, [fid]: { canUndo: u, canRedo: r } }))}
-              registerApi={registerApi}
-            />
-          ))}
+        <div className="flex-1 flex items-center justify-center p-8 bg-gray-100 overflow-auto">
+          <div className="relative" style={{ width: W, height: H }}>
+            {/* Panel labels */}
+            {faces.length > 1 && layout.map(({ face, x }) => (
+              <span key={face.id} className="absolute text-xs font-medium text-gray-400 -translate-x-1/2"
+                style={{ left: (x + face.width / 2) * DISPLAY_SCALE, top: -22 }}>
+                {face.label}
+              </span>
+            ))}
+            {!ready && (
+              <div className="absolute inset-0 flex items-center justify-center bg-white/70 z-10">
+                <svg className="animate-spin w-8 h-8 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+              </div>
+            )}
+            <canvas ref={canvasElRef} className="shadow-2xl" />
+          </div>
         </div>
 
-        {/* Footer */}
         <div className="border-t border-gray-100 bg-white px-5 py-3 flex items-center gap-4">
           <p className="text-sm text-gray-400 shrink-0">
-            {!hasAssets ? 'Add a logo or QR code to get started.' : `${faces.length > 1 ? 'Front & back' : 'Design'} ready.`}
+            {!hasAssets ? 'Add a logo or QR code to get started.' : `${logos.length} item${logos.length > 1 ? 's' : ''} placed.`}
           </p>
           {exportMsg && (
-            <span className={`text-xs font-medium px-3 py-1.5 rounded-lg shrink-0 ${exportMsg.type === 'success' ? 'bg-brand-50 text-brand-700' : 'bg-red-50 text-red-600'}`}>
-              {exportMsg.text}
-            </span>
+            <span className={`text-xs font-medium px-3 py-1.5 rounded-lg shrink-0 ${exportMsg.type === 'success' ? 'bg-brand-50 text-brand-700' : 'bg-red-50 text-red-600'}`}>{exportMsg.text}</span>
           )}
           <div className="flex items-center gap-2 ml-auto">
             <button className="btn-secondary" title="Client approval PDF — white mockup background" disabled={!hasAssets || exporting} onClick={handleDownloadPDF}>
@@ -331,24 +478,81 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+function drawGuides(canvas, layout, safeMargin) {
+  layout.forEach(({ face, x }) => {
+    const ox = x * DISPLAY_SCALE
+    const pw = face.width * DISPLAY_SCALE
+    const ph = face.height * DISPLAY_SCALE
+    if (safeMargin) {
+      const safe = safeMargin * DISPLAY_SCALE
+      canvas.add(new fabric.Rect({
+        left: ox + safe, top: safe, width: pw - safe * 2, height: ph - safe * 2,
+        fill: 'transparent', stroke: 'rgba(20,184,147,0.35)', strokeWidth: 1, strokeDashArray: [5, 4],
+        selectable: false, evented: false, hasControls: false, hasBorders: false, isBackground: true, isGuide: true, faceId: face.id,
+      }))
+    }
+    const g = { stroke: '#ec4899', strokeWidth: 1, selectable: false, evented: false, hasControls: false, hasBorders: false, isBackground: true, isGuide: true, visible: false }
+    canvas.add(new fabric.Line([ox + pw / 2, 0, ox + pw / 2, ph], { ...g, smartGuide: `v_${face.id}` }))
+    canvas.add(new fabric.Line([ox, ph / 2, ox + pw, ph / 2], { ...g, smartGuide: `h_${face.id}` }))
+  })
+}
+
+function applySmartGuides(canvas, obj, layout) {
+  const SNAP = 7
+  const c = obj.getCenterPoint()
+  hideSmartGuides(canvas)
+  // Which panel is the object's centre over?
+  const entry = layout.find(({ face, x }) => {
+    const ox = x * DISPLAY_SCALE, pw = face.width * DISPLAY_SCALE
+    return c.x >= ox && c.x <= ox + pw
+  })
+  if (!entry) return
+  const ox = entry.x * DISPLAY_SCALE
+  const cx = ox + (entry.face.width * DISPLAY_SCALE) / 2
+  const cy = (entry.face.height * DISPLAY_SCALE) / 2
+  const v = canvas.getObjects().find(o => o.smartGuide === `v_${entry.face.id}`)
+  const h = canvas.getObjects().find(o => o.smartGuide === `h_${entry.face.id}`)
+  if (Math.abs(c.x - cx) < SNAP) { obj.set('left', obj.left + (cx - c.x)); v && v.set('visible', true) }
+  if (Math.abs(c.y - cy) < SNAP) { obj.set('top',  obj.top  + (cy - c.y)); h && h.set('visible', true) }
+}
+
+function hideSmartGuides(canvas) {
+  canvas.getObjects().forEach(o => { if (o.smartGuide) o.set('visible', false) })
+}
+
+function clampToCanvas(obj, W, H) {
+  obj.setCoords()
+  const b = obj.getBoundingRect()
+  if (b.left < 0)            obj.set('left', obj.left - b.left)
+  if (b.top  < 0)            obj.set('top',  obj.top  - b.top)
+  if (b.left + b.width  > W) obj.set('left', W - b.width  - (b.left - obj.left))
+  if (b.top  + b.height > H) obj.set('top',  H - b.height - (b.top  - obj.top))
+}
+
+function swapBgElement(fabricImg, src, faceWidth, xFull) {
+  return new Promise((resolve, reject) => {
+    const el = new Image()
+    el.crossOrigin = 'anonymous'
+    el.onload = () => { fabricImg.setElement(el); fabricImg.scaleToWidth(faceWidth * DISPLAY_SCALE); fabricImg.set({ left: xFull * DISPLAY_SCALE, top: 0 }); resolve() }
+    el.onerror = reject
+    el.src = src
+  })
+}
+
 function buildFilename(jobName, variantLabel, faceLabel, ext) {
   const base = [jobName, variantLabel, faceLabel].filter(Boolean).join('_') || 'Design'
   return base.replace(/[^a-zA-Z0-9_.\- ]/g, '_').replace(/\s+/g, '_') + '.' + ext
 }
 
 function downloadBlob(blob, filename) {
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = filename
-  document.body.appendChild(a); a.click(); a.remove()
-  URL.revokeObjectURL(a.href)
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href)
 }
 
 function dataURLtoBlob(dataUrl) {
   const [header, data] = dataUrl.split(',')
   const mime = header.match(/:(.*?);/)[1]
-  const binary = atob(data)
-  const arr = new Uint8Array(binary.length)
+  const binary = atob(data); const arr = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i)
   return new Blob([arr], { type: mime })
 }
