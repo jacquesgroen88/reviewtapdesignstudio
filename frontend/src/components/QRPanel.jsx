@@ -52,8 +52,12 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
   // Black stands use cream (#fff6ea) QR modules on black; white stands use black on white
   const [fgColor,     setFgColor]     = useState(isBlack ? '#fff6ea' : '#000000')
   const [bgColor,     setBgColor]     = useState(isBlack ? '#000000' : '#ffffff')
+  const [transparentBg, setTransparentBg] = useState(false)
   const [ecLevel,     setEcLevel]     = useState('M')
   const [styleId,     setStyleId]     = useState('rounded')
+
+  // Background actually fed to the generator (transparent → no fill)
+  const bgFill = transparentBg ? 'rgba(0,0,0,0)' : bgColor
 
   const [preview,     setPreview]     = useState(null)
   const [working,     setWorking]     = useState(false)
@@ -87,15 +91,15 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
     if (activeTab !== 'new' || !destination.trim()) { setPreview(null); return }
     let cancelled = false
     const t = setTimeout(() => {
-      generateStyledQR(destination.trim(), { fg: fgColor, bg: bgColor, ec: ecLevel, styleId, width: 200 })
+      generateStyledQR(destination.trim(), { fg: fgColor, bg: bgFill, ec: ecLevel, styleId, width: 200 })
         .then(d => { if (!cancelled) setPreview(d) })
         .catch(() => {})
     }, 250)
     return () => { cancelled = true; clearTimeout(t) }
-  }, [destination, fgColor, bgColor, ecLevel, styleId, activeTab])
+  }, [destination, fgColor, bgFill, ecLevel, styleId, activeTab])
 
   async function renderQRtoCanvas(encodeUrl, name) {
-    const dataUrl = await generateStyledQR(encodeUrl, { fg: fgColor, bg: bgColor, ec: ecLevel, styleId, width: 600 })
+    const dataUrl = await generateStyledQR(encodeUrl, { fg: fgColor, bg: bgFill, ec: ecLevel, styleId, width: 600 })
     onQRReady({
       id: `qr_${++qrIdCounter}`, name,
       originalSrc: dataUrl, processedSrc: dataUrl, bgRemoved: false, isQR: true,
@@ -152,9 +156,21 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
 
       {/* Colours */}
       <div className="flex gap-2">
-        <ColorSwatch id="qr-fg" label="QR colour"  value={fgColor} onChange={setFgColor} />
-        <ColorSwatch id="qr-bg" label="Background" value={bgColor} onChange={setBgColor} />
+        <ColorSwatch id="qr-fg" label="QR colour" value={fgColor} onChange={setFgColor} />
+        <div className={`flex-1 ${transparentBg ? 'opacity-40 pointer-events-none' : ''}`}>
+          <ColorSwatch id="qr-bg" label="Background" value={bgColor} onChange={setBgColor} />
+        </div>
       </div>
+
+      {/* Transparent background toggle */}
+      <label className="flex items-center justify-between cursor-pointer">
+        <span className="text-xs font-medium text-gray-700">Transparent background</span>
+        <span className="toggle">
+          <input type="checkbox" checked={transparentBg} onChange={e => setTransparentBg(e.target.checked)} />
+          <span className="toggle-track" />
+          <span className="toggle-thumb" />
+        </span>
+      </label>
 
       {/* Error correction */}
       <div className="flex gap-1">
