@@ -49,7 +49,8 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
   const [label,       setLabel]       = useState(prefillLabel || '')
   const [destination, setDestination] = useState(prefillUrl   || '')
 
-  const [fgColor,     setFgColor]     = useState(isBlack ? '#ffffff' : '#000000')
+  // Black stands use cream (#fff6ea) QR modules on black; white stands use black on white
+  const [fgColor,     setFgColor]     = useState(isBlack ? '#fff6ea' : '#000000')
   const [bgColor,     setBgColor]     = useState(isBlack ? '#000000' : '#ffffff')
   const [ecLevel,     setEcLevel]     = useState('M')
   const [styleId,     setStyleId]     = useState('rounded')
@@ -59,7 +60,7 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
   const [error,       setError]       = useState('')
 
   useEffect(() => {
-    setFgColor(isBlack ? '#ffffff' : '#000000')
+    setFgColor(isBlack ? '#fff6ea' : '#000000')
     setBgColor(isBlack ? '#000000' : '#ffffff')
   }, [isBlack])
 

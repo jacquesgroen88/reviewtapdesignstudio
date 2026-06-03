@@ -3,7 +3,7 @@ import { getAllProducts } from '../lib/products.js'
 
 const PRODUCTS = getAllProducts()
 
-export default function ProductPicker({ onStart, prefill }) {
+export default function ProductPicker({ onStart, prefill, onCancel }) {
   // If launched from an order, default to the product they actually ordered
   const initialProduct = prefill?.orderedCard && !prefill?.orderedStand
     ? (PRODUCTS.find(p => p.id === 'card') || PRODUCTS[0])
@@ -31,6 +31,13 @@ export default function ProductPicker({ onStart, prefill }) {
   return (
     <div className="flex items-center justify-center min-h-[calc(100vh-56px)] p-6 fade-in">
       <div className="w-full max-w-lg space-y-6">
+
+        {onCancel && (
+          <button onClick={onCancel} className="btn-ghost text-sm -mb-2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+            Back
+          </button>
+        )}
 
         <div className="text-center">
           <h1 className="text-2xl font-bold text-gray-900 mb-1">New design</h1>

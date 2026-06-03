@@ -110,3 +110,37 @@ export async function listDesignedProducts() {
   for (const d of data ?? []) (map[d.row_slug] ||= []).push(d.product_id)
   return map
 }
+
+// ── Standalone jobs (not tied to a Formaloo order) ────────────────────────────
+
+export async function createJob(id, name) {
+  const { data, error } = await getClient()
+    .from('jobs').insert({ id, name }).select().single()
+  if (error) throw error
+  return data
+}
+
+export async function listJobs() {
+  const { data, error } = await getClient()
+    .from('jobs').select('*').order('updated_at', { ascending: false })
+  if (error) throw error
+  return data ?? []
+}
+
+export async function getJob(id) {
+  const { data } = await getClient().from('jobs').select('*').eq('id', id).maybeSingle()
+  return data
+}
+
+export async function renameJob(id, name) {
+  const { data, error } = await getClient()
+    .from('jobs').update({ name, updated_at: new Date().toISOString() }).eq('id', id).select().single()
+  if (error) throw error
+  return data
+}
+
+export async function deleteJob(id) {
+  await getClient().from('order_designs').delete().eq('row_slug', id)
+  await getClient().from('order_status').delete().eq('row_slug', id)
+  await getClient().from('jobs').delete().eq('id', id)
+}
