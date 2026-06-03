@@ -95,11 +95,36 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
         const orient = wmm > hmm ? 'landscape' : 'portrait'
         if (i === 0) pdf = new jsPDF({ orientation: orient, unit: 'mm', format: [wmm, hmm] })
         else pdf.addPage([wmm, hmm], orient)
-        pdf.addImage(cv.toDataURL('image/png', 1), 'PNG', 0, 0, wmm, hmm)
+        // Add to the ACTUAL page size jsPDF created (avoids orientation/format
+        // swap quirks that shifted the logo/QR).
+        const pw = pdf.internal.pageSize.getWidth()
+        const ph = pdf.internal.pageSize.getHeight()
+        pdf.addImage(cv.toDataURL('image/png', 1), 'PNG', 0, 0, pw, ph)
       }
       pdf.save(buildFilename(jobName, variant.label, '', 'pdf'))
       showMsg('success', 'Mockup PDF downloaded')
     } catch (err) { console.error(err); showMsg('error', 'PDF export failed') }
+    finally { setExporting(false) }
+  }
+
+  // JPEG client preview — flattened on a clean white background
+  async function handleDownloadJPEG() {
+    setExporting(true)
+    try {
+      for (const f of faces) {
+        const api = apisRef.current[f.id]
+        const cv = await exactCanvas(api, f.mockupTemplate || f.template, f.width, f.height)
+        const out = document.createElement('canvas')
+        out.width = cv.width; out.height = cv.height
+        const ctx = out.getContext('2d')
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, out.width, out.height)
+        ctx.drawImage(cv, 0, 0)
+        const dataUrl = out.toDataURL('image/jpeg', 0.92)
+        downloadBlob(dataURLtoBlob(dataUrl), buildFilename(jobName, variant.label, faces.length > 1 ? f.label : '', 'jpg'))
+      }
+      showMsg('success', 'JPEG preview downloaded')
+    } catch (err) { console.error(err); showMsg('error', 'JPEG export failed') }
     finally { setExporting(false) }
   }
 
@@ -269,9 +294,13 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
             </span>
           )}
           <div className="flex items-center gap-2 ml-auto">
-            <button className="btn-secondary" title="Client approval — white mockup background" disabled={!hasAssets || exporting} onClick={handleDownloadPDF}>
+            <button className="btn-secondary" title="Client approval PDF — white mockup background" disabled={!hasAssets || exporting} onClick={handleDownloadPDF}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Mockup PDF
+            </button>
+            <button className="btn-secondary" title="Client preview JPEG — flattened on white" disabled={!hasAssets || exporting} onClick={handleDownloadJPEG}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              JPEG
             </button>
             <button className="btn-secondary" title="Printer file(s) — cream/print background" disabled={!hasAssets || exporting} onClick={handleDownloadTIFF}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
