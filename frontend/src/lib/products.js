@@ -4,46 +4,57 @@
 const MM_TO_PX = 11.811
 function mm(val) { return Math.round(val * MM_TO_PX) }
 
+// Each product has templateVariants (e.g. white/black). Each variant has
+// one or more `faces` (Stand = 1 face; Card = front + back). A face carries
+// its own pixel dimensions and template image(s).
 export const PRODUCTS = {
   stand: {
     id: 'stand',
     name: 'ReviewTap Stand',
-    // Both templates are 1417×1654 px = 120×140mm at 300 DPI
-    canvasWidth:  1417,
-    canvasHeight: 1654,
-    printWidth:   1417,
-    printHeight:  1654,
-    bleed:        0,
-    safeMargin:   mm(5),
-    description:  'Table stand',
-    // Multiple template variants — user picks one before designing
-    templateVariants: [
-      // `template` = print file (cream bg, goes to printer).
-      // `mockupTemplate` = what the client sees for approval (white bg).
-      { id: 'white', label: 'White Stand', template: '/templates/stand_white.png', mockupTemplate: '/templates/stand_white_mockup.png' },
-      { id: 'black', label: 'Black Stand', template: '/templates/stand_black.png' },
-    ],
+    description: 'Table stand',
+    safeMargin: mm(5),
     defaultVariant: 'white',
-    // No snap zones — internal tool, designers know placement
-    snapZones: [],
+    templateVariants: [
+      {
+        id: 'white', label: 'White Stand',
+        faces: [
+          { id: 'main', label: 'Stand', width: 1417, height: 1654,
+            template: '/templates/stand_white.png',
+            mockupTemplate: '/templates/stand_white_mockup.png' },
+        ],
+      },
+      {
+        id: 'black', label: 'Black Stand',
+        faces: [
+          { id: 'main', label: 'Stand', width: 1417, height: 1654,
+            template: '/templates/stand_black.png' },
+        ],
+      },
+    ],
   },
 
   card: {
     id: 'card',
     name: 'ReviewTap Card',
-    // CR80 standard: 85.6×54mm
-    canvasWidth:  mm(85.6 + 6),
-    canvasHeight: mm(54 + 6),
-    printWidth:   mm(85.6),
-    printHeight:  mm(54),
-    bleed:        mm(3),
-    safeMargin:   mm(3),
-    description:  'Standard credit-card size (CR80)',
+    description: 'Business card — front & back',
+    safeMargin: mm(3),
+    defaultVariant: 'white',
     templateVariants: [
-      { id: 'default', label: 'Standard Card', template: '/templates/card_template.svg' },
+      {
+        id: 'white', label: 'White Card',
+        faces: [
+          { id: 'front', label: 'Front', width: 638, height: 1016, template: '/templates/card_white_front.png' },
+          { id: 'back',  label: 'Back',  width: 638, height: 1016, template: '/templates/card_white_back.png' },
+        ],
+      },
+      {
+        id: 'black', label: 'Black Card',
+        faces: [
+          { id: 'front', label: 'Front', width: 638, height: 1016, template: '/templates/card_black_front.png' },
+          { id: 'back',  label: 'Back',  width: 638, height: 1016, template: '/templates/card_black_back.png' },
+        ],
+      },
     ],
-    defaultVariant: 'default',
-    snapZones: [],
   },
 }
 

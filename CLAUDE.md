@@ -29,9 +29,16 @@ via `frontend/vite.config.js`. On Netlify, those paths hit functions instead.
   `session` (the active design) and routes "Design this order" → prefilled canvas.
 - `components/OrdersPanel.jsx` — Formaloo inbox. Filters (needs_design / all / done),
   per-order status dropdown, "Design" button. Logo thumbnail uses raw S3 URL (plain img OK).
-- `components/DesignCanvas.jsx` — the editor. Fabric canvas, variant switcher (white/black),
-  zoom/pan, export (PDF/TIFF/Drive), Mark complete. **Most complex file.**
+- `components/DesignCanvas.jsx` — **orchestrator**. Reads the active variant's `faces`,
+  renders one `FaceCanvas` per face (Stand = 1, Card = Front+Back side by side), holds a
+  shared toolbar + asset panel that act on the *focused* face. Owns variant switch, per-face
+  logos/history/selection state, and export (iterates faces).
+- `components/FaceCanvas.jsx` — **one editable face**. Self-contained Fabric canvas: background,
+  guides, smart-centre guides, zoom/pan, undo/redo (own useHistory), add/replace/remove asset,
+  `buildExportCanvas(templateUrl)`. Exposes an imperative API via `registerApi(faceId, api)`.
+  Keyed by `face.id` so switching white↔black swaps the bg in place (keeps placed logos).
 - `components/LogoPanel.jsx` — logo upload (dropzone), browser-side BG removal, hosts QRPanel.
+  Operates on the focused face (DesignCanvas routes onLogoReady/onLogoRemove to the active API).
 - `components/QRPanel.jsx` — create new dynamic QR (saves to backend) OR pick a saved one,
   add to canvas. Colours auto-set from stand variant.
 - `components/AdminPanel.jsx` — QR CRUD, bulk import, copy URL, download QR PNG, scan counts.
@@ -137,8 +144,15 @@ renders full-res via `canvas.toCanvasElement(1/DISPLAY_SCALE)`. Then:
    invisible before rendering. Also add `isGuide` to the toJSON key list in useHistory.js or undo/redo
    drops the flag.
 
-8. **Product dimensions.** Stand templates are exactly 1417×1654 px = 120×140 mm @ 300 DPI.
-   `DISPLAY_SCALE = 0.28` shows the canvas smaller on screen; export multiplies back by `1/DISPLAY_SCALE`.
+8. **Product dimensions.** Stand templates are 1417×1654 px = 120×140 mm @ 300 DPI.
+   Card faces are 638×1016 px (portrait CR80). `DISPLAY_SCALE = 0.28` shows canvases smaller;
+   export multiplies back by `1/DISPLAY_SCALE`. Each `face` carries its own width/height.
+
+9. **Faces model.** Every variant has a `faces[]` array (products.js). Stand variants have one
+   face (`main`); Card variants have `front` + `back`. DesignCanvas renders a FaceCanvas per
+   face and exports per face: Mockup PDF = one page per face; Print TIFF / Drive = one file per
+   face (named `..._Front.tiff` / `..._Back.tiff`). `backend/routes/upload.js` no longer resizes
+   (faces vary) — it just tags 300 DPI and converts the incoming full-res PNG to LZW TIFF.
 
 ---
 

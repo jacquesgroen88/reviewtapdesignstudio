@@ -1,9 +1,7 @@
 import express  from 'express'
 import multer   from 'multer'
 import sharp    from 'sharp'
-import path     from 'path'
 import { uploadToDrive } from '../services/googleDrive.js'
-import { PRODUCTS } from '../lib/products.js'
 
 const router  = express.Router()
 const storage = multer.memoryStorage()
@@ -15,19 +13,16 @@ router.post('/', upload.single('file'), async (req, res) => {
     const fileBuffer = req.file?.buffer
 
     if (!fileBuffer) return res.status(400).json({ error: 'No file provided' })
-    if (!businessName || !productId) return res.status(400).json({ error: 'Missing fields' })
+    if (!businessName) return res.status(400).json({ error: 'Missing fields' })
 
-    const product = PRODUCTS[productId]
-    if (!product) return res.status(400).json({ error: 'Unknown product' })
-
-    // Convert PNG → TIFF at 300 DPI with correct physical dimensions
+    // The incoming PNG is already full print resolution from the canvas.
+    // Just tag 300 DPI and convert to LZW TIFF — no resize (faces vary in size).
     const tiffBuffer = await sharp(fileBuffer)
-      .resize(product.canvasWidth, product.canvasHeight, { fit: 'fill' })
       .withMetadata({ density: 300 })
-      .tiff({ compression: 'lzw', quality: 100 })
+      .tiff({ compression: 'lzw' })
       .toBuffer()
 
-    const safeName = filename || sanitizeFilename(`${businessName}_${product.name}_Design.tiff`)
+    const safeName = filename || sanitizeFilename(`${businessName}_Design.tiff`)
 
     // Upload to Google Drive
     const fileId = await uploadToDrive(tiffBuffer, safeName, orderNumber, businessName)
