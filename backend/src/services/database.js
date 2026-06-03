@@ -87,22 +87,26 @@ export async function getAllOrderStatuses() {
 
 // ── Saved designs ─────────────────────────────────────────────────────────────
 
-export async function getDesign(rowSlug) {
-  const { data } = await getClient()
-    .from('order_designs').select('*').eq('row_slug', rowSlug).maybeSingle()
-  return data
+export async function getDesignsForOrder(rowSlug) {
+  const { data, error } = await getClient()
+    .from('order_designs').select('*').eq('row_slug', rowSlug)
+  if (error) throw error
+  return data ?? []
 }
 
 export async function saveDesign(rowSlug, productId, variantId, design) {
   const { error } = await getClient().from('order_designs').upsert(
     { row_slug: rowSlug, product_id: productId, variant_id: variantId, design, updated_at: new Date().toISOString() },
-    { onConflict: 'row_slug' }
+    { onConflict: 'row_slug,product_id' }
   )
   if (error) throw error
 }
 
-export async function listDesignSlugs() {
-  const { data, error } = await getClient().from('order_designs').select('row_slug')
+// Map of row_slug → [product_id, ...] for every order that has a design
+export async function listDesignedProducts() {
+  const { data, error } = await getClient().from('order_designs').select('row_slug, product_id')
   if (error) throw error
-  return (data ?? []).map(d => d.row_slug)
+  const map = {}
+  for (const d of data ?? []) (map[d.row_slug] ||= []).push(d.product_id)
+  return map
 }

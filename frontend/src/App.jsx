@@ -12,7 +12,13 @@ export default function App() {
 
   function handleStart(sessionData) {
     // sessionData = { jobName, product, variantId } from the picker
-    setSession({ ...sessionData, prefill: pendingPrefill || undefined })
+    const designsByProduct = pendingPrefill?.designsByProduct || {}
+    const saved = designsByProduct[sessionData.product.id] || null
+    setSession({
+      ...sessionData,
+      variantId: saved?.variant_id || sessionData.variantId,
+      prefill: pendingPrefill ? { ...pendingPrefill, savedDesign: saved } : undefined,
+    })
     setPendingPrefill(null)
     setTab('studio')
   }
@@ -35,28 +41,19 @@ export default function App() {
       orderedCard:     order.orderedCard,
     }
 
-    // If a saved design exists, reopen it directly with its product + variant
+    // Load any existing designs (one per product) so the picker can show which
+    // are already done and reopen them; always go through the picker so a second
+    // product (e.g. a card on a stand order) can be added.
+    let designsByProduct = {}
     try {
-      const res   = await fetch(`/api/orders/${order.rowSlug}/design`)
-      const saved = res.ok ? await res.json() : null
-      if (saved && saved.product_id) {
-        const product = getProduct(saved.product_id)
-        if (product) {
-          setSession({
-            jobName:   order.companyName || `Order ${order.orderNumber}`,
-            product,
-            variantId: saved.variant_id,
-            prefill:   { ...basePrefill, savedDesign: saved },
-          })
-          setPendingPrefill(null)
-          setTab('studio')
-          return
-        }
+      const res = await fetch(`/api/orders/${order.rowSlug}/designs`)
+      if (res.ok) {
+        const arr = await res.json()
+        designsByProduct = Object.fromEntries(arr.map(d => [d.product_id, d]))
       }
-    } catch { /* fall through to picker */ }
+    } catch { /* ignore */ }
 
-    // No saved design → choose product + colour in the picker
-    setPendingPrefill(basePrefill)
+    setPendingPrefill({ ...basePrefill, designsByProduct })
     setSession(null)
     setTab('studio')
   }

@@ -1,6 +1,6 @@
 import express from 'express'
 import { fetchOrders, fetchOrder } from '../services/formaloo.js'
-import { getOrderStatus, setOrderStatus, getAllOrderStatuses, getDesign, saveDesign, listDesignSlugs } from '../services/database.js'
+import { getOrderStatus, setOrderStatus, getAllOrderStatuses, getDesignsForOrder, saveDesign, listDesignedProducts } from '../services/database.js'
 
 const router = express.Router()
 
@@ -19,13 +19,14 @@ router.get('/', async (req, res) => {
 
     const statuses  = await getAllOrderStatuses()
     const statusMap = Object.fromEntries(statuses.map(s => [s.row_slug, s]))
-    const designSlugs = new Set(await listDesignSlugs())
+    const designedMap = await listDesignedProducts()
 
     const enriched = orders.map(order => ({
       ...order,
       status: statusMap[order.rowSlug]?.status ?? (order.orderedStand || order.orderedCard ? 'pending' : 'not_needed'),
       note:   statusMap[order.rowSlug]?.note   ?? null,
-      hasDesign: designSlugs.has(order.rowSlug),
+      designedProducts: designedMap[order.rowSlug] ?? [],
+      hasDesign: !!designedMap[order.rowSlug]?.length,
     }))
 
     let result
@@ -56,11 +57,10 @@ router.get('/:rowSlug', async (req, res) => {
   }
 })
 
-// GET saved design (canvas state) for an order
-router.get('/:rowSlug/design', async (req, res) => {
+// GET all saved designs (one per product) for an order
+router.get('/:rowSlug/designs', async (req, res) => {
   try {
-    const d = await getDesign(req.params.rowSlug)
-    res.json(d || null)
+    res.json(await getDesignsForOrder(req.params.rowSlug))
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

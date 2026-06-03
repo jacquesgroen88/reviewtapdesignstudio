@@ -13,6 +13,8 @@ export default function ProductPicker({ onStart, prefill }) {
   const [selectedVariant,  setSelectedVariant]  = useState(initialProduct.defaultVariant)
   const [jobName,          setJobName]           = useState(prefill?.companyName || '')
 
+  const designsByProduct = prefill?.designsByProduct || {}
+
   function handleProductChange(product) {
     setSelectedProduct(product)
     setSelectedVariant(product.defaultVariant)
@@ -83,6 +85,12 @@ export default function ProductPicker({ onStart, prefill }) {
                   {product.name}
                 </p>
                 <p className="text-xs text-gray-400 mt-0.5">{product.description}</p>
+                {designsByProduct[product.id] && (
+                  <span className="inline-flex items-center gap-1 mt-1.5 text-xs font-medium text-brand-600">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                    Saved — opens to edit
+                  </span>
+                )}
               </button>
             ))}
           </div>

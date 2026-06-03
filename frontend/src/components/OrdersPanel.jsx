@@ -217,13 +217,26 @@ function OrderCard({ order, onDesign, onStatusChange, isUpdating }) {
       </div>
 
       {/* Products ordered */}
-      <div className="flex gap-1.5 flex-wrap">
+      <div className="flex gap-1.5 flex-wrap items-center">
         {order.orderedStand && <ProductTag label="Stand" icon="📋" />}
         {order.orderedCard  && <ProductTag label="Card"  icon="💳" />}
         {!order.orderedStand && !order.orderedCard && (
           <span className="text-xs text-gray-400">No custom design ordered</span>
         )}
       </div>
+
+      {/* Designs created */}
+      {order.designedProducts?.length > 0 && (
+        <div className="flex gap-1.5 flex-wrap items-center">
+          <span className="text-xs text-gray-400">Designed:</span>
+          {order.designedProducts.map(pid => (
+            <span key={pid} className="inline-flex items-center gap-1 text-xs font-medium bg-brand-50 text-brand-700 px-2 py-0.5 rounded-full">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+              {pid === 'stand' ? 'Stand' : pid === 'card' ? 'Card' : pid}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Logo preview */}
       {order.logoUrl && (
