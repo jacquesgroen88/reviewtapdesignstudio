@@ -86,9 +86,20 @@ renders full-res via `canvas.toCanvasElement(1/DISPLAY_SCALE)`. Then:
 - **TIFF**: `getImageData` → `UTIF.encodeImage` (300 DPI tags) → blob download. Client-side.
 - **Drive**: PNG → `/api/upload` → sharp converts to 300 DPI LZW TIFF → Google Drive.
 
-### Mark complete
-"Mark complete" (only shown for orders, i.e. `prefill.rowSlug`) → `PATCH /api/orders/:slug/status
-{status:'done'}` → returns to Orders inbox. Status stored in Supabase `order_status` table.
+### Save / reopen / mark complete
+When designing from an order (`prefill.rowSlug` set) the footer shows **Save** and **Done**:
+- **Save** → `PUT /api/orders/:slug/design` (serializes every face's Fabric JSON via
+  `api.exportState()`) + sets status `in_progress`. Stays in editor.
+- **Done** → same save + status `done`, returns to inbox.
+Orders are **never locked** — clicking an order with a saved design reopens it: App fetches
+`GET /api/orders/:slug/design`, restores product/variant, and each FaceCanvas `importState()`s
+its saved JSON (re-attaching move handlers, rebuilding the asset-panel list). Orders with no
+saved design open the ProductPicker (prefilled with company name) to choose product + colour.
+Saved design = Supabase `order_designs(row_slug, product_id, variant_id, design JSONB)`.
+
+### Mark complete (legacy note)
+Status lives in `order_status`. The `done` status no longer disables the card — the Design
+button becomes **Edit** and the order stays fully reusable.
 
 ---
 
@@ -153,6 +164,13 @@ renders full-res via `canvas.toCanvasElement(1/DISPLAY_SCALE)`. Then:
    face and exports per face: Mockup PDF = one page per face; Print TIFF / Drive = one file per
    face (named `..._Front.tiff` / `..._Back.tiff`). `backend/routes/upload.js` no longer resizes
    (faces vary) — it just tags 300 DPI and converts the incoming full-res PNG to LZW TIFF.
+
+10. **Export must use exact face dimensions.** `DISPLAY_SCALE`-rounded canvas dims don't divide
+    back evenly, so `toCanvasElement(1/DISPLAY_SCALE)` is a few px off the true face size. That
+    mismatch made jsPDF stretch the image and shift the QR (TIFF was fine, PDF wasn't).
+    `exactCanvas()` in DesignCanvas redraws onto a canvas of exactly `face.width×face.height`
+    before PDF/TIFF/Drive, so the PDF page aspect matches perfectly. Don't pass `'FAST'` to
+    jsPDF.addImage — it degrades the image.
 
 ---
 

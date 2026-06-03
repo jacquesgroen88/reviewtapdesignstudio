@@ -6,40 +6,58 @@ import OrdersPanel   from './components/OrdersPanel.jsx'
 import { getProduct } from './lib/products.js'
 
 export default function App() {
-  const [session, setSession] = useState(null)
-  const [tab,     setTab]     = useState('orders')  // 'orders' | 'studio' | 'admin'
+  const [session,        setSession]        = useState(null)
+  const [pendingPrefill, setPendingPrefill] = useState(null)   // order data awaiting product choice
+  const [tab,            setTab]            = useState('orders') // 'orders' | 'studio' | 'admin'
 
   function handleStart(sessionData) {
-    setSession(sessionData)
+    // sessionData = { jobName, product, variantId } from the picker
+    setSession({ ...sessionData, prefill: pendingPrefill || undefined })
+    setPendingPrefill(null)
     setTab('studio')
   }
 
   function handleBack() {
     setSession(null)
+    setPendingPrefill(null)
     setTab('orders')
   }
 
-  // Called when designer clicks "Design" on an order card
-  function handleDesignOrder(order) {
-    // Determine which product to start with (stand takes priority)
-    const productId = order.orderedStand ? 'stand' : 'card'
-    const product   = getProduct(productId)
+  // Called when designer clicks "Design" / "Edit" on an order card
+  async function handleDesignOrder(order) {
+    const basePrefill = {
+      logoUrl:         order.logoUrl,
+      googleReviewUrl: order.googleReviewUrl,
+      orderNumber:     order.orderNumber,
+      companyName:     order.companyName,
+      rowSlug:         order.rowSlug,
+      orderedStand:    order.orderedStand,
+      orderedCard:     order.orderedCard,
+    }
 
-    setSession({
-      jobName:    order.companyName || `Order ${order.orderNumber}`,
-      product,
-      variantId:  product.defaultVariant,
-      // Pre-load data from Formaloo submission
-      prefill: {
-        logoUrl:        order.logoUrl,
-        googleReviewUrl: order.googleReviewUrl,
-        orderNumber:    order.orderNumber,
-        companyName:    order.companyName,
-        rowSlug:        order.rowSlug,
-        orderedStand:   order.orderedStand,
-        orderedCard:    order.orderedCard,
-      },
-    })
+    // If a saved design exists, reopen it directly with its product + variant
+    try {
+      const res   = await fetch(`/api/orders/${order.rowSlug}/design`)
+      const saved = res.ok ? await res.json() : null
+      if (saved && saved.product_id) {
+        const product = getProduct(saved.product_id)
+        if (product) {
+          setSession({
+            jobName:   order.companyName || `Order ${order.orderNumber}`,
+            product,
+            variantId: saved.variant_id,
+            prefill:   { ...basePrefill, savedDesign: saved },
+          })
+          setPendingPrefill(null)
+          setTab('studio')
+          return
+        }
+      }
+    } catch { /* fall through to picker */ }
+
+    // No saved design → choose product + colour in the picker
+    setPendingPrefill(basePrefill)
+    setSession(null)
     setTab('studio')
   }
 
@@ -106,7 +124,7 @@ export default function App() {
       <main className="flex-1 flex flex-col">
         {tab === 'orders' && <OrdersPanel onDesignOrder={handleDesignOrder} />}
         {tab === 'admin'  && <AdminPanel />}
-        {tab === 'studio' && !session && <ProductPicker onStart={handleStart} />}
+        {tab === 'studio' && !session && <ProductPicker onStart={handleStart} prefill={pendingPrefill} />}
         {tab === 'studio' &&  session  && (
           <DesignCanvas
             key={session.product.id + '-' + session.variantId + '-' + (session.prefill?.rowSlug || 'manual')}

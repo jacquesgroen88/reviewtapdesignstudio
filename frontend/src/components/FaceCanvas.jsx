@@ -168,11 +168,35 @@ export default function FaceCanvas({
       return out
     }
 
+    // Serialize / restore canvas state (for saving + reopening designs)
+    const STATE_KEYS = ['id', 'isQR', 'isBackground', 'isGuide', 'smartGuide', 'selectable', 'evented', 'hasControls', 'hasBorders']
+    function exportState() {
+      return canvas.toJSON(STATE_KEYS)
+    }
+    function importState(json) {
+      return new Promise(resolve => {
+        canvas.loadFromJSON(json, () => {
+          bgRef.current = canvas.getObjects().find(o => o.isBackground && o.type === 'image') || bgRef.current
+          const assets = []
+          canvas.getObjects().forEach(o => {
+            if (!o.isBackground && !o.isGuide && o.type === 'image') {
+              o.on('moving', () => { applySmartGuides(canvas, o, W, H); clampToCanvas(o, W, H) })
+              const src = o.getSrc ? o.getSrc() : ''
+              assets.push({ id: o.id || `a_${assets.length}`, name: o.isQR ? 'QR Code' : 'Logo', originalSrc: src, processedSrc: src, bgRemoved: false, isQR: !!o.isQR })
+            }
+          })
+          canvas.renderAll()
+          snapshot()
+          resolve(assets)
+        })
+      })
+    }
+
     registerApi?.(face.id, {
       addOrReplace, removeAsset, deleteSelected, bringForward, sendBackward,
       undo: doUndo, redo: doRedo, canUndo, canRedo,
       setZoom, getZoom, resetZoom, buildExportCanvas,
-      face,
+      exportState, importState, face,
     })
 
     return () => {

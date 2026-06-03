@@ -1,6 +1,6 @@
 import express from 'express'
 import { fetchOrders, fetchOrder } from '../services/formaloo.js'
-import { getOrderStatus, setOrderStatus, getAllOrderStatuses } from '../services/database.js'
+import { getOrderStatus, setOrderStatus, getAllOrderStatuses, getDesign, saveDesign, listDesignSlugs } from '../services/database.js'
 
 const router = express.Router()
 
@@ -15,11 +15,13 @@ router.get('/', async (req, res) => {
 
     const statuses  = await getAllOrderStatuses()
     const statusMap = Object.fromEntries(statuses.map(s => [s.row_slug, s]))
+    const designSlugs = new Set(await listDesignSlugs())
 
     const enriched = orders.map(order => ({
       ...order,
       status: statusMap[order.rowSlug]?.status ?? (order.orderedStand || order.orderedCard ? 'pending' : 'not_needed'),
       note:   statusMap[order.rowSlug]?.note   ?? null,
+      hasDesign: designSlugs.has(order.rowSlug),
     }))
 
     const filtered = (filter === 'all' || filter === 'needs_design')
@@ -38,6 +40,28 @@ router.get('/:rowSlug', async (req, res) => {
     const order = await fetchOrder(req.params.rowSlug)
     const local = await getOrderStatus(req.params.rowSlug)
     res.json({ ...order, status: local?.status ?? 'pending', note: local?.note ?? null })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET saved design (canvas state) for an order
+router.get('/:rowSlug/design', async (req, res) => {
+  try {
+    const d = await getDesign(req.params.rowSlug)
+    res.json(d || null)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PUT saved design
+router.put('/:rowSlug/design', async (req, res) => {
+  try {
+    const { productId, variantId, design } = req.body
+    if (!productId || !variantId || !design) return res.status(400).json({ error: 'productId, variantId, design required' })
+    await saveDesign(req.params.rowSlug, productId, variantId, design)
+    res.json({ ok: true })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

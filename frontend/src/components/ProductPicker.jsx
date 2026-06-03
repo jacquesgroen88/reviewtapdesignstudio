@@ -3,10 +3,15 @@ import { getAllProducts } from '../lib/products.js'
 
 const PRODUCTS = getAllProducts()
 
-export default function ProductPicker({ onStart }) {
-  const [selectedProduct, setSelectedProduct] = useState(PRODUCTS[0])
-  const [selectedVariant,  setSelectedVariant]  = useState(PRODUCTS[0].defaultVariant)
-  const [jobName,          setJobName]           = useState('')
+export default function ProductPicker({ onStart, prefill }) {
+  // If launched from an order, default to the product they actually ordered
+  const initialProduct = prefill?.orderedCard && !prefill?.orderedStand
+    ? (PRODUCTS.find(p => p.id === 'card') || PRODUCTS[0])
+    : PRODUCTS[0]
+
+  const [selectedProduct, setSelectedProduct] = useState(initialProduct)
+  const [selectedVariant,  setSelectedVariant]  = useState(initialProduct.defaultVariant)
+  const [jobName,          setJobName]           = useState(prefill?.companyName || '')
 
   function handleProductChange(product) {
     setSelectedProduct(product)
@@ -27,7 +32,13 @@ export default function ProductPicker({ onStart }) {
 
         <div className="text-center">
           <h1 className="text-2xl font-bold text-gray-900 mb-1">New design</h1>
-          <p className="text-gray-400 text-sm">Pick a product and template, then start placing the logo.</p>
+          {prefill?.companyName ? (
+            <p className="text-gray-400 text-sm">
+              Designing for <span className="font-semibold text-brand-600">{prefill.companyName}</span> — choose the product and colour.
+            </p>
+          ) : (
+            <p className="text-gray-400 text-sm">Pick a product and template, then start placing the logo.</p>
+          )}
         </div>
 
         {/* Job name (optional) */}

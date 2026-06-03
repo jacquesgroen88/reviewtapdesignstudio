@@ -146,7 +146,7 @@ function OrderCard({ order, onDesign, onStatusChange, isUpdating }) {
   const canDesign = order.orderedStand || order.orderedCard
 
   return (
-    <div className={`card p-4 space-y-3 ${order.status === 'done' ? 'opacity-60' : ''}`}>
+    <div className={`card p-4 space-y-3 ${order.status === 'done' ? 'border-brand-100' : ''}`}>
       {/* Top row: company + status */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
@@ -158,9 +158,17 @@ function OrderCard({ order, onDesign, onStatusChange, isUpdating }) {
             )}
           </p>
         </div>
-        <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${status.color}`}>
-          {status.label}
-        </span>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${status.color}`}>
+            {status.label}
+          </span>
+          {order.hasDesign && (
+            <span className="inline-flex items-center gap-1 text-xs text-gray-400">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+              saved
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Products ordered */}
@@ -228,7 +236,7 @@ function OrderCard({ order, onDesign, onStatusChange, isUpdating }) {
 
       {/* Actions */}
       <div className="flex gap-2 pt-1 border-t border-gray-50">
-        {canDesign && order.status !== 'done' && (
+        {canDesign && (
           <button
             className="btn-primary flex-1 text-sm py-2"
             onClick={onDesign}
@@ -236,7 +244,7 @@ function OrderCard({ order, onDesign, onStatusChange, isUpdating }) {
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
             </svg>
-            Design
+            {order.hasDesign || order.status === 'done' ? 'Edit' : 'Design'}
           </button>
         )}
         <StatusDropdown

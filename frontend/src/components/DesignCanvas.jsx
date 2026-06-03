@@ -6,7 +6,7 @@ import FaceCanvas    from './FaceCanvas.jsx'
 const ZOOM_STEP = 0.25
 
 export default function DesignCanvas({ product, initialVariantId, jobName, prefill, onOrderComplete }) {
-  const [variantId, setVariantId] = useState(initialVariantId || product.defaultVariant)
+  const [variantId, setVariantId] = useState(prefill?.savedDesign?.variant_id || initialVariantId || product.defaultVariant)
   const variant = product.templateVariants.find(v => v.id === variantId) || product.templateVariants[0]
   const faces   = variant.faces
 
@@ -29,8 +29,14 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   function registerApi(faceId, api) {
     if (api) {
       apisRef.current[faceId] = api
-      // Prefill the logo onto the first face once its canvas is ready
-      if (faceId === faces[0].id && prefill?.logoUrl && !prefillDone.current) {
+      const saved = prefill?.savedDesign
+      if (saved?.design?.faces?.[faceId]) {
+        // Restore the previously-saved canvas for this face
+        api.importState(saved.design.faces[faceId]).then(assets => {
+          setLogosByFace(prev => ({ ...prev, [faceId]: assets }))
+        })
+      } else if (faceId === faces[0].id && prefill?.logoUrl && !prefillDone.current) {
+        // Fresh design — prefill the logo onto the first face
         prefillDone.current = true
         const proxied = `/api/proxy-image?url=${encodeURIComponent(prefill.logoUrl)}`
         const entry = { id: 'prefill_logo', name: `${prefill.companyName || 'Logo'}.png`, originalSrc: proxied, processedSrc: proxied, bgRemoved: false }
@@ -65,6 +71,17 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   function resetZoom()  { const a = apisRef.current[activeFaceId]; if (a) { a.resetZoom(); setZoom(1) } }
 
   // ── Export ──────────────────────────────────────────────────────────────
+  // Render a face to a canvas at EXACTLY its print dimensions, so the PDF page
+  // aspect ratio matches perfectly (no stretch/shift) and the TIFF is exact size.
+  async function exactCanvas(api, templateUrl, w, h) {
+    const cv = await api.buildExportCanvas(templateUrl)
+    if (cv.width === w && cv.height === h) return cv
+    const out = document.createElement('canvas')
+    out.width = w; out.height = h
+    out.getContext('2d').drawImage(cv, 0, 0, w, h)
+    return out
+  }
+
   async function handleDownloadPDF() {
     setExporting(true)
     try {
@@ -73,12 +90,12 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       for (let i = 0; i < faces.length; i++) {
         const f = faces[i]
         const api = apisRef.current[f.id]
-        const cv = await api.buildExportCanvas(f.mockupTemplate || f.template)
+        const cv = await exactCanvas(api, f.mockupTemplate || f.template, f.width, f.height)
         const wmm = f.width / 11.811, hmm = f.height / 11.811
         const orient = wmm > hmm ? 'landscape' : 'portrait'
         if (i === 0) pdf = new jsPDF({ orientation: orient, unit: 'mm', format: [wmm, hmm] })
         else pdf.addPage([wmm, hmm], orient)
-        pdf.addImage(cv.toDataURL('image/png', 1), 'PNG', 0, 0, wmm, hmm, undefined, 'FAST')
+        pdf.addImage(cv.toDataURL('image/png', 1), 'PNG', 0, 0, wmm, hmm)
       }
       pdf.save(buildFilename(jobName, variant.label, '', 'pdf'))
       showMsg('success', 'Mockup PDF downloaded')
@@ -92,7 +109,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       const UTIF = (await import('utif')).default
       for (const f of faces) {
         const api = apisRef.current[f.id]
-        const cv = await api.buildExportCanvas(f.template)
+        const cv = await exactCanvas(api, f.template, f.width, f.height)
         const id = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height)
         const buf = UTIF.encodeImage(id.data.buffer, cv.width, cv.height, { t282: [300], t283: [300], t296: [2] })
         downloadBlob(new Blob([buf], { type: 'image/tiff' }), buildFilename(jobName, variant.label, faces.length > 1 ? f.label : '', 'tiff'))
@@ -107,7 +124,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     try {
       for (const f of faces) {
         const api = apisRef.current[f.id]
-        const cv = await api.buildExportCanvas(f.template)
+        const cv = await exactCanvas(api, f.template, f.width, f.height)
         const blob = dataURLtoBlob(cv.toDataURL('image/png', 1))
         const filename = buildFilename(jobName, variant.label, faces.length > 1 ? f.label : '', 'tiff')
         const form = new FormData()
@@ -124,16 +141,44 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     finally { setExporting(false) }
   }
 
+  function serializeDesign() {
+    const facesJson = {}
+    for (const f of faces) { const api = apisRef.current[f.id]; if (api) facesJson[f.id] = api.exportState() }
+    return { product_id: product.id, variant_id: variantId, faces: facesJson }
+  }
+  async function persistDesign() {
+    const res = await fetch(`/api/orders/${prefill.rowSlug}/design`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productId: product.id, variantId, design: serializeDesign() }),
+    })
+    if (!res.ok) throw new Error(await res.text())
+  }
+  async function setStatus(status) {
+    const res = await fetch(`/api/orders/${prefill.rowSlug}/status`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    })
+    if (!res.ok) throw new Error(await res.text())
+  }
+
+  async function handleSaveDesign() {
+    if (!prefill?.rowSlug) return
+    setExporting(true)
+    try {
+      await persistDesign()
+      await setStatus('in_progress')
+      showMsg('success', 'Design saved — you can reopen it anytime')
+    } catch (err) { showMsg('error', `Save failed: ${err.message}`) }
+    finally { setExporting(false) }
+  }
+
   async function handleMarkComplete() {
     if (!prefill?.rowSlug) return
     setExporting(true)
     try {
-      const res = await fetch(`/api/orders/${prefill.rowSlug}/status`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'done' }),
-      })
-      if (!res.ok) throw new Error(await res.text())
-      showMsg('success', 'Order marked complete')
+      await persistDesign()
+      await setStatus('done')
+      showMsg('success', 'Saved & marked complete')
       setTimeout(() => onOrderComplete?.(), 700)
     } catch (err) { showMsg('error', `Could not save: ${err.message}`) }
     finally { setExporting(false) }
@@ -237,10 +282,16 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
               Drive
             </button>
             {prefill?.rowSlug && (
-              <button className="btn-primary" disabled={exporting} onClick={handleMarkComplete}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                Mark complete
-              </button>
+              <>
+                <button className="btn-secondary" title="Save the design so you can reopen it later" disabled={exporting} onClick={handleSaveDesign}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                  Save
+                </button>
+                <button className="btn-primary" title="Save and mark the order complete" disabled={exporting} onClick={handleMarkComplete}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  Done
+                </button>
+              </>
             )}
           </div>
         </div>
