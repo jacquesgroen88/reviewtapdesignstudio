@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react'
-import QRCode from 'qrcode'
 
 let qrIdCounter = 0
 
@@ -7,22 +6,53 @@ let qrIdCounter = 0
 // override with VITE_QR_BASE_URL (e.g. https://qr.reviewtap.co.za/r).
 const BASE_URL = import.meta.env.VITE_QR_BASE_URL || `${window.location.origin}/r`
 
+// QR shape presets → qr-code-styling dot + corner types
+const QR_STYLES = [
+  { id: 'square',         label: 'Square',   dot: 'square',          corner: 'square' },
+  { id: 'rounded',        label: 'Rounded',  dot: 'rounded',         corner: 'extra-rounded' },
+  { id: 'dots',           label: 'Dots',     dot: 'dots',            corner: 'dot' },
+  { id: 'classy',         label: 'Classy',   dot: 'classy-rounded',  corner: 'extra-rounded' },
+]
+
+async function generateStyledQR(data, { fg, bg, ec, styleId, width = 600 }) {
+  const QRCodeStyling = (await import('qr-code-styling')).default
+  const preset = QR_STYLES.find(s => s.id === styleId) || QR_STYLES[0]
+  const qr = new QRCodeStyling({
+    width, height: width, data, margin: 8,
+    qrOptions: { errorCorrectionLevel: ec },
+    dotsOptions:          { color: fg, type: preset.dot },
+    backgroundOptions:    { color: bg },
+    cornersSquareOptions: { color: fg, type: preset.corner },
+    cornersDotOptions:    { color: fg, type: preset.id === 'dots' ? 'dot' : '' },
+  })
+  const blob = await qr.getRawData('png')
+  return await blobToDataURL(blob)
+}
+
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(r.result)
+    r.onerror = reject
+    r.readAsDataURL(blob)
+  })
+}
+
 export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel }) {
   const isBlack = variantId === 'black'
 
   const [savedCodes,  setSavedCodes]  = useState([])
   const [loadingList, setLoadingList] = useState(true)
   const [backendDown, setBackendDown] = useState(false)
-  const [activeTab,   setActiveTab]   = useState('new')   // 'new' | 'saved'
+  const [activeTab,   setActiveTab]   = useState('new')
 
-  // New dynamic QR form
   const [label,       setLabel]       = useState(prefillLabel || '')
   const [destination, setDestination] = useState(prefillUrl   || '')
 
-  // Shared styling
   const [fgColor,     setFgColor]     = useState(isBlack ? '#ffffff' : '#000000')
   const [bgColor,     setBgColor]     = useState(isBlack ? '#000000' : '#ffffff')
   const [ecLevel,     setEcLevel]     = useState('M')
+  const [styleId,     setStyleId]     = useState('rounded')
 
   const [preview,     setPreview]     = useState(null)
   const [working,     setWorking]     = useState(false)
@@ -33,7 +63,6 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
     setBgColor(isBlack ? '#000000' : '#ffffff')
   }, [isBlack])
 
-  // Keep form in sync if a new order is prefilled
   useEffect(() => {
     if (prefillUrl)   setDestination(prefillUrl)
     if (prefillLabel) setLabel(prefillLabel)
@@ -52,34 +81,32 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
   }
   useEffect(() => { loadSaved() }, [])
 
-  // Live preview of the new-code destination (or its future /r URL)
+  // Live preview (debounced via timeout) of the styled QR
   useEffect(() => {
     if (activeTab !== 'new' || !destination.trim()) { setPreview(null); return }
     let cancelled = false
-    QRCode.toDataURL(destination.trim(), {
-      color: { dark: fgColor, light: bgColor }, width: 160, errorCorrectionLevel: ecLevel, margin: 1,
-    }).then(d => { if (!cancelled) setPreview(d) }).catch(() => {})
-    return () => { cancelled = true }
-  }, [destination, fgColor, bgColor, ecLevel, activeTab])
+    const t = setTimeout(() => {
+      generateStyledQR(destination.trim(), { fg: fgColor, bg: bgColor, ec: ecLevel, styleId, width: 200 })
+        .then(d => { if (!cancelled) setPreview(d) })
+        .catch(() => {})
+    }, 250)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [destination, fgColor, bgColor, ecLevel, styleId, activeTab])
 
   async function renderQRtoCanvas(encodeUrl, name) {
-    const dataUrl = await QRCode.toDataURL(encodeUrl, {
-      color: { dark: fgColor, light: bgColor }, width: 600, errorCorrectionLevel: ecLevel, margin: 1,
-    })
+    const dataUrl = await generateStyledQR(encodeUrl, { fg: fgColor, bg: bgColor, ec: ecLevel, styleId, width: 600 })
     onQRReady({
       id: `qr_${++qrIdCounter}`, name,
       originalSrc: dataUrl, processedSrc: dataUrl, bgRemoved: false, isQR: true,
     })
   }
 
-  // Create a dynamic QR: save to backend, encode the /r/:id redirect, add to canvas
   async function handleCreateDynamic() {
     if (!label.trim())       { setError('Enter a label.'); return }
     if (!destination.trim()) { setError('Enter a destination URL.'); return }
     setError(''); setWorking(true)
     try {
       if (backendDown) {
-        // No backend — fall back to a static QR of the destination
         await renderQRtoCanvas(destination.trim(), `QR — ${label.trim()}`)
       } else {
         const res = await fetch('/api/qr', {
@@ -108,11 +135,27 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
     <div className="border-t border-gray-100 pt-4 space-y-3">
       <h3 className="text-sm font-semibold text-gray-800">QR Code</h3>
 
-      {/* Shared styling: colours + error correction */}
+      {/* Style selector */}
+      <div>
+        <label className="label">Style</label>
+        <div className="grid grid-cols-4 gap-1">
+          {QR_STYLES.map(s => (
+            <button key={s.id} onClick={() => setStyleId(s.id)}
+              className={`py-1.5 rounded-lg text-xs font-medium transition-colors
+                ${styleId === s.id ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+              {s.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Colours */}
       <div className="flex gap-2">
         <ColorSwatch id="qr-fg" label="QR colour"  value={fgColor} onChange={setFgColor} />
         <ColorSwatch id="qr-bg" label="Background" value={bgColor} onChange={setBgColor} />
       </div>
+
+      {/* Error correction */}
       <div className="flex gap-1">
         {['L','M','Q','H'].map(l => (
           <button key={l} onClick={() => setEcLevel(l)}
@@ -156,7 +199,7 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
           )}
           {preview && (
             <div className="flex justify-center">
-              <img src={preview} alt="QR preview" className="w-16 h-16 rounded border border-gray-100" />
+              <img src={preview} alt="QR preview" className="w-20 h-20 rounded border border-gray-100" />
             </div>
           )}
           {error && <p className="text-xs text-red-500">{error}</p>}

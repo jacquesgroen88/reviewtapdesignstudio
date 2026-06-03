@@ -278,8 +278,10 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
 
   // ── Export ────────────────────────────────────────────────────────────────
   // Render a clean, full-resolution canvas: guides hidden, selection cleared,
-  // viewport reset (so zoom/pan don't affect output). Returns an HTMLCanvasElement.
-  function buildExportCanvas() {
+  // viewport reset. Optionally swap the background to a different template
+  // (e.g. the white mockup) just for this render, then restore.
+  // Returns a Promise<HTMLCanvasElement>.
+  async function buildExportCanvas(templateUrl) {
     const canvas = fabricRef.current
     canvas.discardActiveObject()
 
@@ -288,12 +290,16 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
 
     const vpt = canvas.viewportTransform.slice()
     canvas.setViewportTransform([1, 0, 0, 1, 0, 0])
-    canvas.renderAll()
 
-    // toCanvasElement renders objects fresh at the given multiplier
+    const bg = bgImageRef.current
+    const needSwap = bg && templateUrl
+    if (needSwap) await swapBgElement(bg, templateUrl, W, H)
+
+    canvas.renderAll()
     const out = canvas.toCanvasElement(1 / DISPLAY_SCALE)
 
-    // Restore on-screen state
+    // Restore the on-screen background (the print/cream template) and state
+    if (needSwap) await swapBgElement(bg, variant.template, W, H)
     canvas.setViewportTransform(vpt)
     guides.forEach(g => g.set('visible', true))
     canvas.renderAll()
@@ -304,7 +310,8 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   async function handleDownloadPDF() {
     setExporting(true)
     try {
-      const exportCanvas = buildExportCanvas()
+      // Client approval PDF → use the white mockup background if defined
+      const exportCanvas = await buildExportCanvas(variant.mockupTemplate || variant.template)
       const dataUrl  = exportCanvas.toDataURL('image/png', 1)
       const widthMm  = product.printWidth  / 11.811
       const heightMm = product.printHeight / 11.811
@@ -325,7 +332,8 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   async function handleDownloadTIFF() {
     setExporting(true)
     try {
-      const exportCanvas = buildExportCanvas()
+      // Printer file → print (cream) background
+      const exportCanvas = await buildExportCanvas(variant.template)
       const ctx = exportCanvas.getContext('2d')
       const { width, height } = exportCanvas
       const imageData = ctx.getImageData(0, 0, width, height)
@@ -354,7 +362,9 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   async function handleUploadToDrive() {
     setExporting(true)
     try {
-      const blob     = dataURLtoBlob(buildExportCanvas().toDataURL('image/png', 1))
+      // Printer file → print (cream) background
+      const exportCanvas = await buildExportCanvas(variant.template)
+      const blob     = dataURLtoBlob(exportCanvas.toDataURL('image/png', 1))
       const filename = buildFilename(jobName, variant.label, 'tiff')
       const form = new FormData()
       form.append('file', blob, filename)
@@ -477,15 +487,15 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
             </span>
           )}
           <div className="flex items-center gap-2 ml-auto">
-            <button className="btn-secondary" disabled={!hasAssets || exporting} onClick={handleDownloadPDF}>
+            <button className="btn-secondary" title="Client approval — uses the white mockup background" disabled={!hasAssets || exporting} onClick={handleDownloadPDF}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              PDF
+              Mockup PDF
             </button>
-            <button className="btn-secondary" disabled={!hasAssets || exporting} onClick={handleDownloadTIFF}>
+            <button className="btn-secondary" title="Printer file — uses the cream print background" disabled={!hasAssets || exporting} onClick={handleDownloadTIFF}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              TIFF
+              Print TIFF
             </button>
-            <button className="btn-secondary" disabled={!hasAssets || exporting} onClick={handleUploadToDrive}>
+            <button className="btn-secondary" title="Send the print file (cream background) to Google Drive" disabled={!hasAssets || exporting} onClick={handleUploadToDrive}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/>
                 <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
@@ -576,6 +586,24 @@ function applySmartGuides(canvas, obj, W, H) {
 function hideSmartGuides(canvas) {
   canvas.getObjects().forEach(o => {
     if (o.smartGuide) o.set('visible', false)
+  })
+}
+
+// Swap the underlying image element of a Fabric background image (used to
+// render a different template — e.g. white mockup vs cream print — for export)
+function swapBgElement(fabricImg, src, W, H) {
+  return new Promise((resolve, reject) => {
+    const el = new Image()
+    el.crossOrigin = 'anonymous'
+    el.onload = () => {
+      fabricImg.setElement(el)
+      fabricImg.scaleToWidth(W)
+      fabricImg.scaleToHeight(H)
+      fabricImg.set({ left: 0, top: 0 })
+      resolve()
+    }
+    el.onerror = reject
+    el.src = src
   })
 }
 

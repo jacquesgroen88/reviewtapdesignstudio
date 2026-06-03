@@ -18,7 +18,9 @@ export const PRODUCTS = {
     description:  'Table stand',
     // Multiple template variants — user picks one before designing
     templateVariants: [
-      { id: 'white', label: 'White Stand', template: '/templates/stand_white.png' },
+      // `template` = print file (cream bg, goes to printer).
+      // `mockupTemplate` = what the client sees for approval (white bg).
+      { id: 'white', label: 'White Stand', template: '/templates/stand_white.png', mockupTemplate: '/templates/stand_white_mockup.png' },
       { id: 'black', label: 'Black Stand', template: '/templates/stand_black.png' },
     ],
     defaultVariant: 'white',
