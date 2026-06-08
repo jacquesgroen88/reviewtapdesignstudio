@@ -49,7 +49,7 @@ export default function CanvasToolbar({
       <div className="flex-1" />
 
       {/* Safe area legend */}
-      <span className="hidden md:flex items-center gap-1.5 text-xs text-gray-400 mr-3">
+      <span className="hidden md:flex items-center gap-1.5 text-xs text-gray-400 mr-3 whitespace-nowrap shrink-0">
         <span className="w-4 h-px border-t border-dashed border-brand-400/60" />
         Safe area
       </span>
@@ -88,7 +88,7 @@ export default function CanvasToolbar({
       </ToolBtn>
 
       {/* Pan hint */}
-      <span className="hidden lg:block text-xs text-gray-300 ml-1 select-none">Space+drag to pan</span>
+      <span className="hidden xl:block text-xs text-gray-300 ml-2 select-none whitespace-nowrap shrink-0">Ctrl+scroll zoom · Space-drag pan</span>
     </div>
   )
 }

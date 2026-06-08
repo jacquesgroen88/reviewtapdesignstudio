@@ -176,16 +176,16 @@ export default function LogoPanel({ logos, onLogosChange, onLogoReady, onLogoRem
       {/* QR Panel */}
       <QRPanel onQRReady={handleQRReady} variantId={variantId} prefillUrl={prefillGoogleUrl} prefillLabel={prefillLabel} />
 
-      {/* Tips */}
-      <div className="bg-brand-50 rounded-xl p-3 space-y-1">
-        <p className="text-xs font-semibold text-brand-700">Tips</p>
-        <ul className="text-xs text-brand-600 space-y-1">
+      {/* Tips (collapsed by default to save space) */}
+      <details className="bg-brand-50 rounded-xl px-3 py-2">
+        <summary className="text-xs font-semibold text-brand-700 cursor-pointer select-none">Tips & shortcuts</summary>
+        <ul className="text-xs text-brand-600 space-y-1 mt-2">
           <li>• Drag to move, handles to resize/rotate</li>
           <li>• Ctrl+scroll or +/− to zoom canvas</li>
-          <li>• Ctrl+Z / Ctrl+Y to undo / redo</li>
-          <li>• Delete key removes selected item</li>
+          <li>• Space-drag to pan · Ctrl+Z/Y undo/redo</li>
+          <li>• Ctrl+S saves · Delete removes selected</li>
         </ul>
-      </div>
+      </details>
     </div>
   )
 }

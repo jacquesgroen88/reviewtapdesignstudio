@@ -15,22 +15,19 @@ export default function App() {
   // Start a brand-new design (from the picker). A design row is created on first Save.
   function handleStart(sessionData) {
     // sessionData = { jobName, product, variantId }
-    const prefill = {
-      ...(pendingPrefill || {}),
-      designId: null,
-      savedDesign: null,
-    }
+    const prefill = { ...(pendingPrefill || {}), designId: null, savedDesign: null }
+    const origin = pendingPrefill?.rowSlug ? 'orders' : 'studio'
     setSession({
       ...sessionData,
       jobName: pendingPrefill?.companyName || sessionData.jobName,
-      prefill,
+      prefill, origin,
     })
     setPendingPrefill(null)
     setTab('studio')
   }
 
   // Open an existing saved design directly into the editor
-  async function handleOpenDesign(designMeta) {
+  async function handleOpenDesign(designMeta, origin = 'studio') {
     try {
       const res = await fetch(`/api/designs/${designMeta.id}`)
       if (!res.ok) return
@@ -41,13 +38,15 @@ export default function App() {
         jobName:   designMeta.ownerName || full.name,
         product,
         variantId: full.variant_id,
+        origin,
         prefill: {
           rowSlug:     full.owner_slug || null,
           designId:    full.id,
+          designName:  full.name,
           companyName: designMeta.ownerName || full.name,
           logoUrl:        designMeta.logoUrl,
           googleReviewUrl: designMeta.googleReviewUrl,
-          savedDesign: { design: full.design },
+          savedDesign: { name: full.name, design: full.design },
         },
       })
       setPendingPrefill(null)
@@ -55,11 +54,13 @@ export default function App() {
     } catch { /* ignore */ }
   }
 
+  // Leave the editor / picker back to wherever we came from
   function handleBack() {
+    const origin = session?.origin || (tab === 'studio' ? 'studio' : 'orders')
     setSession(null)
     setPendingPrefill(null)
-    setStudioView('home')
-    setTab('orders')
+    if (origin === 'orders') { setTab('orders') }
+    else { setTab('studio'); setStudioView('home') }
   }
 
   // "+ New design" on an order → picker scoped to that order
@@ -119,27 +120,19 @@ export default function App() {
             </nav>
           </div>
 
-          {tab === 'studio' && (
-            <div className="flex items-center gap-4">
-              {session?.jobName && (
-                <span className="text-sm text-gray-500">
-                  <span className="text-gray-400">Job:</span>{' '}
-                  <span className="font-medium text-gray-700">{session.jobName}</span>
-                </span>
-              )}
-              <button onClick={handleBack} className="btn-ghost text-sm">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M19 12H5M12 5l-7 7 7 7"/>
-                </svg>
-                Back to orders
-              </button>
-            </div>
+          {tab === 'studio' && session && (
+            <button onClick={handleBack} className="btn-ghost text-sm">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 12H5M12 5l-7 7 7 7"/>
+              </svg>
+              {session.origin === 'orders' ? 'Back to orders' : 'Back to library'}
+            </button>
           )}
         </div>
       </header>
 
       <main className="flex-1 flex flex-col">
-        {tab === 'orders' && <OrdersPanel onNewDesign={handleNewOrderDesign} onOpenDesign={handleOpenDesign} />}
+        {tab === 'orders' && <OrdersPanel onNewDesign={handleNewOrderDesign} onOpenDesign={(d) => handleOpenDesign(d, 'orders')} />}
         {tab === 'admin'  && <AdminPanel />}
         {tab === 'studio' && session && (
           <DesignCanvas
@@ -161,7 +154,7 @@ export default function App() {
         {tab === 'studio' && !session && studioView === 'home' && (
           <DesignLibrary
             onNewDesign={() => { setPendingPrefill(null); setStudioView('picker') }}
-            onOpenDesign={handleOpenDesign}
+            onOpenDesign={(d) => handleOpenDesign(d, 'studio')}
           />
         )}
       </main>

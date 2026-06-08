@@ -5,6 +5,7 @@ import { generateStyledQR, QR_BASE_URL } from '../lib/qr.js'
 import { useHistory } from '../hooks/useHistory.js'
 import LogoPanel     from './LogoPanel.jsx'
 import CanvasToolbar from './CanvasToolbar.jsx'
+import Menu          from './Menu.jsx'
 
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 4.0
@@ -20,6 +21,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   const panRef      = useRef(false)
   const lastPan     = useRef(null)
   const prefillDone = useRef(false)
+  const saveRef     = useRef(() => {})
 
   const [variantId,   setVariantId]   = useState(prefill?.savedDesign?.variant_id || initialVariantId || product.defaultVariant)
   const [ready,       setReady]       = useState(false)
@@ -30,6 +32,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   const [exportMsg,   setExportMsg]   = useState(null)
   const [currentDesignId, setCurrentDesignId] = useState(prefill?.designId || null)
   const [showVariants, setShowVariants] = useState(false)
+  const [designName, setDesignName] = useState(prefill?.savedDesign?.name || prefill?.designName || (jobName ? `${jobName} – ${product.name}` : `${product.name} design`))
 
   const { snapshot, undo, redo, canUndo, canRedo, clear } = useHistory(fabricRef)
 
@@ -138,6 +141,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
         if (!spaceRef.current) { spaceRef.current = true; canvas.defaultCursor = 'grab'; canvas.setCursor('grab'); canvas.selection = false }
         return
       }
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveRef.current() }
       if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo() }
       if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) { e.preventDefault(); redo() }
       if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -173,6 +177,8 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   // Keep a ref of current zoom for the wheel handler closure
   const zoomRef = useRef(1)
   useEffect(() => { zoomRef.current = zoom }, [zoom])
+  // Keep the save handler current for the Cmd/Ctrl+S shortcut
+  useEffect(() => { saveRef.current = () => { if (hasAssets && !exporting) handleSaveDesign() } })
 
   function onAssetMove(obj) {
     applySmartGuides(fabricRef.current, obj, layout)
@@ -346,24 +352,19 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       .filter(o => o.type === 'image' && !o.isBackground && !o.isGuide)
       .map(o => ({ id: o.id, isQR: !!o.isQR, src: o.getSrc ? o.getSrc() : '', left: o.left, top: o.top, scaleX: o.scaleX, scaleY: o.scaleY, angle: o.angle || 0 }))
   }
-  function defaultName(suffix) {
-    const base = jobName || 'Design'
-    return `${base} – ${product.name}${suffix ? ' ' + suffix : ''}`
-  }
-
-  // Create a brand-new design row, or update the one we're editing
+  // Create a brand-new design row, or update the one we're editing.
+  // The name comes from the inline name field (no native prompts).
   async function persistDesign() {
     const design = { assets: serializeAssets() }
+    const name = (designName || '').trim() || `${product.name} design`
     if (currentDesignId) {
       const res = await fetch(`/api/designs/${currentDesignId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ variantId, design }),
+        body: JSON.stringify({ name, variantId, design }),
       })
       if (!res.ok) throw new Error(await res.text())
       return currentDesignId
     }
-    const name = (window.prompt('Name this design:', defaultName('')) || '').trim()
-    if (!name) throw new Error('cancelled')
     const res = await fetch('/api/designs', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, ownerSlug: prefill?.rowSlug || null, productId: product.id, variantId, design }),
@@ -372,6 +373,15 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     const d = await res.json()
     setCurrentDesignId(d.id)
     return d.id
+  }
+  // Instant rename for an already-saved design (on blur of the name field)
+  async function renameIfSaved() {
+    if (!currentDesignId) return
+    const name = (designName || '').trim()
+    if (!name) return
+    await fetch(`/api/designs/${currentDesignId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+    }).catch(() => {})
   }
   async function setStatus(status) {
     if (!prefill?.rowSlug) return
@@ -382,13 +392,13 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   async function handleSaveDesign() {
     setExporting(true)
     try { await persistDesign(); await setStatus('pending_approval'); showMsg('success', 'Design saved to your library') }
-    catch (err) { if (err.message !== 'cancelled') showMsg('error', `Save failed: ${err.message}`) }
+    catch (err) { showMsg('error', `Save failed: ${err.message}`) }
     finally { setExporting(false) }
   }
   async function handleMarkComplete() {
     setExporting(true)
     try { await persistDesign(); await setStatus('done'); showMsg('success', 'Saved & marked complete'); setTimeout(() => onOrderComplete?.(), 700) }
-    catch (err) { if (err.message !== 'cancelled') showMsg('error', `Could not save: ${err.message}`) }
+    catch (err) { showMsg('error', `Could not save: ${err.message}`) }
     finally { setExporting(false) }
   }
 
@@ -396,8 +406,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   async function handleDuplicate() {
     setExporting(true)
     try {
-      const name = (window.prompt('Name for the duplicate:', defaultName('(copy)')) || '').trim()
-      if (!name) return
+      const name = `${(designName || product.name).trim()} (copy)`
       const res = await fetch('/api/designs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, ownerSlug: prefill?.rowSlug || null, productId: product.id, variantId, design: { assets: serializeAssets() } }),
@@ -405,7 +414,8 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       if (!res.ok) throw new Error(await res.text())
       const d = await res.json()
       setCurrentDesignId(d.id)
-      showMsg('success', `Duplicated — now editing “${name}”. Swap the QR and Save.`)
+      setDesignName(name)
+      showMsg('success', 'Duplicated — now editing the copy. Swap the QR and Save.')
     } catch (err) { showMsg('error', `Duplicate failed: ${err.message}`) }
     finally { setExporting(false) }
   }
@@ -459,6 +469,21 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       </div>
 
       <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Design name (editable, click-to-rename) */}
+        <div className="border-b border-gray-100 bg-white px-4 py-2 flex items-center gap-2">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-300 shrink-0"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          <input
+            value={designName}
+            onChange={e => setDesignName(e.target.value)}
+            onBlur={renameIfSaved}
+            placeholder="Untitled design"
+            className="text-sm font-semibold text-gray-800 bg-transparent border border-transparent hover:border-gray-200 focus:border-brand-400 focus:bg-white rounded-lg px-2 py-1 -mx-1 outline-none w-full max-w-sm transition-colors"
+          />
+          {currentDesignId
+            ? <span className="text-xs text-brand-600 shrink-0">saved</span>
+            : <span className="text-xs text-gray-300 shrink-0">unsaved</span>}
+        </div>
+
         <div className="border-b border-gray-100 bg-white flex items-center">
           {product.templateVariants.length > 1 && (
             <div className="flex items-center border-r border-gray-100 px-3 py-2 gap-1.5 shrink-0">
@@ -499,43 +524,42 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
         <div className="border-t border-gray-100 bg-white px-5 py-3 flex items-center gap-4">
           <p className="text-sm text-gray-400 shrink-0">
             {!hasAssets ? 'Add a logo or QR code to get started.' : `${logos.length} item${logos.length > 1 ? 's' : ''} placed.`}
-            <span className="ml-2 text-gray-300">· {zoomPct}% · Ctrl+scroll to zoom, Space-drag to pan</span>
           </p>
           {exportMsg && (
             <span className={`text-xs font-medium px-3 py-1.5 rounded-lg shrink-0 ${exportMsg.type === 'success' ? 'bg-brand-50 text-brand-700' : 'bg-red-50 text-red-600'}`}>{exportMsg.text}</span>
           )}
           <div className="flex items-center gap-2 ml-auto">
-            <button className="btn-secondary" title="Client approval PDF — white mockup background" disabled={!hasAssets || exporting} onClick={handleDownloadPDF}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              Mockup PDF
-            </button>
-            <button className="btn-secondary" title="Client preview JPEG — flattened on white" disabled={!hasAssets || exporting} onClick={handleDownloadJPEG}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-              JPEG
-            </button>
-            <button className="btn-secondary" title="Printer file(s) — cream/print background" disabled={!hasAssets || exporting} onClick={handleDownloadTIFF}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              Print TIFF
-            </button>
-            <button className="btn-secondary" title="Send print file(s) to Google Drive" disabled={!hasAssets || exporting} onClick={handleUploadToDrive}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
-              Drive
-            </button>
-            {hasQR && (
-              <button className="btn-secondary" title="Create one design per QR code (same layout, different QR)" disabled={exporting} onClick={() => setShowVariants(true)}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 20h3M20 17v3"/></svg>
-                QR variants
-              </button>
-            )}
-            {hasAssets && (
-              <button className="btn-secondary" title="Save a copy as a new design, then swap its QR" disabled={exporting} onClick={handleDuplicate}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                Duplicate
-              </button>
-            )}
-            <button className="btn-secondary" title="Save this design to your library" disabled={!hasAssets || exporting} onClick={handleSaveDesign}>
+            {/* Export menu — client previews + print files grouped */}
+            <Menu
+              disabled={!hasAssets || exporting}
+              className="btn-secondary disabled:opacity-50"
+              label={<><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg></>}
+              items={[
+                { heading: 'Client preview' },
+                { label: 'Mockup PDF', onClick: handleDownloadPDF },
+                { label: 'JPEG image',  onClick: handleDownloadJPEG },
+                { heading: 'Print files' },
+                { label: 'Print TIFF (download)', onClick: handleDownloadTIFF },
+                { label: 'Send to Google Drive',  onClick: handleUploadToDrive },
+              ]}
+            />
+
+            {/* More — design-level actions */}
+            <Menu
+              disabled={!hasAssets || exporting}
+              className="btn-secondary px-3 disabled:opacity-50"
+              label={<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>}
+              items={[
+                { label: 'Duplicate design', onClick: handleDuplicate,
+                  icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> },
+                ...(hasQR ? [{ label: 'Generate QR variants…', onClick: () => setShowVariants(true),
+                  icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M17 20h3M20 17v3"/></svg> }] : []),
+              ]}
+            />
+
+            <button className="btn-secondary" title="Save this design to your library (Ctrl+S)" disabled={!hasAssets || exporting} onClick={handleSaveDesign}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-              {currentDesignId ? 'Save' : 'Save to library'}
+              Save
             </button>
             {prefill?.rowSlug && (
               <button className="btn-primary" title="Save and mark the order complete" disabled={!hasAssets || exporting} onClick={handleMarkComplete}>
@@ -564,7 +588,10 @@ function VariantsModal({ onClose, onGenerate }) {
 
   useEffect(() => {
     fetch('/api/qr').then(r => r.ok ? r.json() : []).then(c => { setCodes(c); setLoading(false) }).catch(() => setLoading(false))
-  }, [])
+    function onKey(e) { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   function toggle(id) { setSel(p => { const s = new Set(p); s.has(id) ? s.delete(id) : s.add(id); return s }) }
   const filtered = codes.filter(c => c.label.toLowerCase().includes(search.toLowerCase()))

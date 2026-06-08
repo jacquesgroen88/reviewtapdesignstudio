@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import Menu from './Menu.jsx'
 
 const STATUS_LABELS = {
   pending:          { label: 'Pending',          color: 'bg-amber-100 text-amber-700' },
@@ -193,43 +194,28 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
 
   return (
     <div className={`card p-4 space-y-3 ${order.status === 'done' ? 'border-brand-100' : ''}`}>
-      {/* Top row: company + status */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+      {/* Top row: logo thumb + company + status */}
+      <div className="flex items-start gap-2.5">
+        {order.logoUrl && (
+          <img src={order.logoUrl} alt="" onError={e => { e.target.style.display = 'none' }}
+            className="w-9 h-9 object-contain rounded-lg border border-gray-100 bg-white shrink-0" />
+        )}
+        <div className="min-w-0 flex-1">
           <p className="font-semibold text-gray-900 truncate">{order.companyName || '(no name)'}</p>
           <p className="text-xs text-gray-400 mt-0.5">
             #{order.orderNumber}
-            {order.submittedAt && (
-              <> · {new Date(order.submittedAt).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })}</>
+            {order.submittedAt && <> · {new Date(order.submittedAt).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })}</>}
+            {(order.orderedStand || order.orderedCard) && (
+              <> · ordered {[order.orderedStand && 'Stand', order.orderedCard && 'Card'].filter(Boolean).join(' + ')}</>
             )}
           </p>
         </div>
-        <div className="flex flex-col items-end gap-1 shrink-0">
-          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${status.color}`}>
-            {status.label}
-          </span>
-          {order.hasDesign && (
-            <span className="inline-flex items-center gap-1 text-xs text-gray-400">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-              saved
-            </span>
-          )}
-        </div>
+        <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${status.color}`}>{status.label}</span>
       </div>
 
-      {/* Products ordered */}
-      <div className="flex gap-1.5 flex-wrap items-center">
-        {order.orderedStand && <ProductTag label="Stand" icon="📋" />}
-        {order.orderedCard  && <ProductTag label="Card"  icon="💳" />}
-        {!order.orderedStand && !order.orderedCard && (
-          <span className="text-xs text-gray-400">No custom design ordered</span>
-        )}
-      </div>
-
-      {/* Designs created for this order */}
+      {/* Designs for this order — the actionable focus */}
       {order.designs?.length > 0 && (
         <div className="space-y-1">
-          <span className="text-xs text-gray-400">Designs ({order.designs.length}):</span>
           {order.designs.map(d => (
             <div key={d.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-gray-50">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-brand-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
@@ -242,62 +228,8 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
         </div>
       )}
 
-      {/* Logo preview */}
-      {order.logoUrl && (
-        <div className="flex items-center gap-2.5 p-2 bg-gray-50 rounded-xl">
-          <img
-            src={order.logoUrl}
-            alt="Logo"
-            className="w-12 h-10 object-contain rounded border border-gray-100 bg-white"
-            onError={e => { e.target.style.display = 'none' }}
-          />
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-gray-600">Logo uploaded</p>
-            <p className="text-xs text-gray-400 truncate">{order.logoUrl.split('/').pop()?.slice(0, 24)}</p>
-          </div>
-          <button
-            onClick={() => editLogoInCanva(order)}
-            title="Download the original logo and open Canva to edit it"
-            className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 transition-colors"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
-            </svg>
-            Canva
-          </button>
-        </div>
-      )}
-
-      {/* Google review link */}
-      {order.googleReviewUrl && (
-        <div className="flex items-center gap-2 text-xs text-gray-500">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="shrink-0 text-brand-400">
-            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
-          </svg>
-          <a href={order.googleReviewUrl} target="_blank" rel="noopener noreferrer"
-            className="truncate hover:text-brand-600 transition-colors">
-            {order.googleReviewUrl.replace('https://', '')}
-          </a>
-        </div>
-      )}
-
-      {/* Expanded details */}
-      {expanded && (
-        <div className="text-xs text-gray-500 space-y-1 pt-1 border-t border-gray-50">
-          {order.cardEmail    && <p><span className="text-gray-400">Email:</span> {order.cardEmail}</p>}
-          {order.cardPhone    && <p><span className="text-gray-400">Phone:</span> {order.cardPhone}</p>}
-          {order.whatsapp     && <p><span className="text-gray-400">WhatsApp:</span> {order.whatsapp}</p>}
-          {order.cardAddress  && <p><span className="text-gray-400">Address:</span> {order.cardAddress.slice(0, 80)}</p>}
-          {order.landingPageText && <p><span className="text-gray-400">Landing text:</span> {order.landingPageText.slice(0, 100)}</p>}
-        </div>
-      )}
-
-      <button onClick={() => setExpanded(e => !e)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">
-        {expanded ? '▲ Less detail' : '▼ More detail'}
-      </button>
-
       {/* Actions */}
-      <div className="flex gap-2 pt-1 border-t border-gray-50">
+      <div className="flex gap-2">
         {canDesign && (
           <button className="btn-primary flex-1 text-sm py-2" onClick={onNewDesign}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -306,12 +238,40 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
             New design
           </button>
         )}
-        <StatusDropdown
-          current={order.status}
-          onChange={onStatusChange}
-          loading={isUpdating}
-        />
+        <StatusDropdown current={order.status} onChange={onStatusChange} loading={isUpdating} />
       </div>
+
+      <button onClick={() => setExpanded(e => !e)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">
+        {expanded ? '▲ Hide details' : '▼ Logo, review link & contact'}
+      </button>
+
+      {/* Expanded reference details */}
+      {expanded && (
+        <div className="space-y-2 pt-1 border-t border-gray-50">
+          {order.logoUrl && (
+            <div className="flex items-center gap-2.5">
+              <span className="text-xs text-gray-400 shrink-0">Logo:</span>
+              <span className="flex-1 min-w-0 text-xs text-gray-500 truncate">{order.logoUrl.split('/').pop()?.slice(0, 28)}</span>
+              <button onClick={() => editLogoInCanva(order)} title="Download the logo and open Canva to edit it"
+                className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 transition-colors">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                Canva
+              </button>
+            </div>
+          )}
+          {order.googleReviewUrl && (
+            <p className="text-xs text-gray-500 truncate">
+              <span className="text-gray-400">Review:</span>{' '}
+              <a href={order.googleReviewUrl} target="_blank" rel="noopener noreferrer" className="hover:text-brand-600">{order.googleReviewUrl.replace('https://', '')}</a>
+            </p>
+          )}
+          {order.cardEmail    && <p className="text-xs text-gray-500"><span className="text-gray-400">Email:</span> {order.cardEmail}</p>}
+          {order.cardPhone    && <p className="text-xs text-gray-500"><span className="text-gray-400">Phone:</span> {order.cardPhone}</p>}
+          {order.whatsapp     && <p className="text-xs text-gray-500"><span className="text-gray-400">WhatsApp:</span> {order.whatsapp}</p>}
+          {order.cardAddress  && <p className="text-xs text-gray-500"><span className="text-gray-400">Address:</span> {order.cardAddress.slice(0, 80)}</p>}
+          {order.landingPageText && <p className="text-xs text-gray-500"><span className="text-gray-400">Landing text:</span> {order.landingPageText.slice(0, 100)}</p>}
+        </div>
+      )}
     </div>
   )
 }
@@ -347,21 +307,18 @@ function ProductTag({ label, icon }) {
 }
 
 function StatusDropdown({ current, onChange, loading }) {
-  const options = STATUS_OPTIONS
-  // Map legacy / not_needed onto a valid option
   const normalized = current === 'in_progress' ? 'pending_approval'
     : current === 'not_needed' ? 'skipped'
     : (current || 'pending')
+  const cur = STATUS_LABELS[normalized] ?? STATUS_LABELS.pending
   return (
-    <div className="relative">
-      <select
-        value={normalized}
-        onChange={e => onChange(e.target.value)}
-        disabled={loading}
-        className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-600 cursor-pointer focus:outline-none focus:ring-1 focus:ring-brand-400 disabled:opacity-50"
-      >
-        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-    </div>
+    <Menu
+      direction="down"
+      align="right"
+      disabled={loading}
+      className={`text-xs font-medium px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1 transition-opacity disabled:opacity-50 ${cur.color}`}
+      label={<>{loading ? 'Saving…' : cur.label}<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg></>}
+      items={STATUS_OPTIONS.map(o => ({ label: o.label, onClick: () => onChange(o.value) }))}
+    />
   )
 }
