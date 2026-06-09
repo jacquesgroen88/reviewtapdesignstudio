@@ -452,7 +452,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   const zoomPct = Math.round(zoom * 100)
 
   return (
-    <div className="flex h-full min-h-[calc(100vh-56px)]">
+    <div className="flex h-[calc(100vh-56px)] overflow-hidden">
       <div className="w-64 shrink-0 border-r border-gray-100 bg-white overflow-y-auto flex flex-col">
         {faces.length > 1 && (
           <p className="px-4 pt-3 -mb-1 text-xs text-gray-400">{faces.map(f => f.label).join(' (left) & ')} (right) — drag assets freely between them.</p>
