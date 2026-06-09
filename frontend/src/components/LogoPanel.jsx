@@ -209,5 +209,7 @@ async function removeBg(imageSrc) {
   if (!resp.ok) throw new Error(`could not load image (${resp.status})`)
   const inputBlob = await resp.blob()
   const outBlob = await removeBackground(inputBlob)
-  return URL.createObjectURL(outBlob)
+  // Return a DATA URL (not a blob: object URL) so it persists when the design
+  // is saved and reopened in a later session.
+  return readFileAsDataURL(outBlob)
 }

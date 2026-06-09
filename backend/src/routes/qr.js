@@ -14,13 +14,26 @@ router.get('/:id', async (req, res) => {
   res.json(qr)
 })
 
+// Make a label unique against existing codes: "Name" → "Name (1)" → "Name (2)"…
+function uniqueLabel(label, existing) {
+  const taken = new Set(existing.map(q => q.label))
+  if (!taken.has(label)) return label
+  // Strip an existing " (n)" suffix so copies of copies don't stack
+  const base = label.replace(/\s*\(\d+\)\s*$/, '')
+  let n = 1
+  while (taken.has(`${base} (${n})`)) n++
+  return `${base} (${n})`
+}
+
 router.post('/', async (req, res) => {
   const { label, destination, id: customId } = req.body
   if (!label?.trim())       return res.status(400).json({ error: 'label is required' })
   if (!destination?.trim()) return res.status(400).json({ error: 'destination is required' })
   const id = customId?.trim() || nanoid(7)
   try {
-    const qr = await createQRCode({ id, label: label.trim(), destination: destination.trim() })
+    const existing = await listQRCodes()
+    const finalLabel = uniqueLabel(label.trim(), existing)
+    const qr = await createQRCode({ id, label: finalLabel, destination: destination.trim() })
     res.status(201).json(qr)
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'ID already exists' })
