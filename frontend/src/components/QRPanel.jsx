@@ -18,9 +18,9 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
   // Black stands use cream (#fff6ea) QR modules on black; white stands use black on white
   const [fgColor,     setFgColor]     = useState(isBlack ? '#fff6ea' : '#000000')
   const [bgColor,     setBgColor]     = useState(isBlack ? '#000000' : '#ffffff')
-  const [transparentBg, setTransparentBg] = useState(false)
+  const [transparentBg, setTransparentBg] = useState(true)   // transparent by default
   const [ecLevel,     setEcLevel]     = useState('M')
-  const [styleId,     setStyleId]     = useState('rounded')
+  const [styleId,     setStyleId]     = useState('rounded')   // rounded by default
 
   // Background actually fed to the generator (transparent → no fill)
   const bgFill = transparentBg ? 'rgba(0,0,0,0)' : bgColor
