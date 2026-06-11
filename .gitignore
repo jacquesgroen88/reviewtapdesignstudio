@@ -31,3 +31,6 @@ npm-debug.log*
 
 # Plan files (internal)
 .claude/plans/
+
+# graphify tool output
+graphify-out/
