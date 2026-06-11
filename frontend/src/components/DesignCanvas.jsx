@@ -62,7 +62,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       fabric.Image.fromURL(face.template, img => {
         if (img && img.width) {
           img.scaleToWidth(face.width * DISPLAY_SCALE)
-          img.set({ left: x * DISPLAY_SCALE, top: 0, selectable: false, evented: false, hasControls: false, hasBorders: false, isBackground: true, faceId: face.id })
+          img.set({ left: x * DISPLAY_SCALE, top: 0, selectable: false, evented: false, hasControls: false, hasBorders: false, isBackground: true, faceId: face.id, objectCaching: false })
           bgRefs.current[face.id] = img
           canvas.add(img); canvas.sendToBack(img)
         }
@@ -699,7 +699,13 @@ function swapBgElement(fabricImg, src, faceWidth, xFull) {
   return new Promise((resolve, reject) => {
     const el = new Image()
     el.crossOrigin = 'anonymous'
-    el.onload = () => { fabricImg.setElement(el); fabricImg.scaleToWidth(faceWidth * DISPLAY_SCALE); fabricImg.set({ left: xFull * DISPLAY_SCALE, top: 0 }); resolve() }
+    el.onload = () => {
+      fabricImg.setElement(el)
+      fabricImg.scaleToWidth(faceWidth * DISPLAY_SCALE)
+      fabricImg.set({ left: xFull * DISPLAY_SCALE, top: 0, objectCaching: false })
+      fabricImg.dirty = true   // invalidate any cached render so the swap actually paints
+      resolve()
+    }
     el.onerror = reject
     el.src = src
   })
