@@ -11,6 +11,29 @@ Everything (frontend + backend functions) runs on **Netlify**. DB is **Supabase*
 
 ---
 
+## ⚠️ QR uptime is sacred — read before ANY change
+
+Printed cards and NFC stands are **in the field with paying clients**. Every tap or scan
+hits `https://link.reviewtap.co.za/r/:code`. If that path breaks, clients experience
+downtime in front of *their* customers — there is no "refresh the page" for a printed card.
+
+Non-negotiable rules:
+1. **`/r/:code` stays a standalone Netlify function** (`netlify/functions/redirect.js`)
+   behind a `force = true` redirect in `netlify.toml`. Never route it through the Express
+   `api.js` function, never let the SPA fallback catch it, never remove the `force` flag.
+2. **Never deploy a change that touches `redirect.js`, the `/r/*` redirect rule, or the
+   `qr_codes` Supabase table without testing the redirect immediately after** — e.g.
+   `curl -sI https://link.reviewtap.co.za/r/<known-code>` must 302 to the destination,
+   and a bogus code must 404 (a 200 with HTML means the SPA fallback swallowed it = broken).
+3. **`keepalive.js` (scheduled `@daily`) must never be deleted** — it stops the Supabase
+   free tier from pausing, which would take every printed QR code down.
+4. **Frontend deploys are safe for QR codes** (the redirect is a separate function), but
+   verify rule 2 anyway whenever `netlify.toml` changes — redirect order/typos can reroute `/r`.
+5. DNS for `link.reviewtap.co.za` is a CNAME → this Netlify site. Don't repoint it without
+   migrating every code in `qr_codes` first; printed codes encode this exact host forever.
+
+---
+
 ## Architecture
 
 ```
@@ -180,6 +203,27 @@ button becomes **Edit** and the order stays fully reusable.
     before PDF/TIFF/Drive, so the PDF page aspect matches perfectly. Don't pass `'FAST'` to
     jsPDF.addImage — it degrades the image.
 
+11. **Never `await import()` business-critical libs — deploys break open tabs.** (Jun 2026
+    incident.) Vite splits dynamic imports into hashed chunk files; every deploy rotates the
+    hashes and deletes the old files. A Studio tab opened before a deploy then can't fetch
+    the chunk — and the SPA fallback (`/* → /index.html 200`) masks the 404 by returning
+    HTML with a 200, so the browser dies with "Failed to fetch dynamically imported module".
+    This silently killed QR add ("nothing happens"), PDF export, and TIFF export for a
+    designer mid-session. Fix: `qr-code-styling`, `jspdf`, and `utif` are now **static
+    imports** in `lib/qr.js` and `DesignCanvas.jsx` — they live in the main bundle that's
+    already loaded in the tab, immune to hash rotation. Rule going forward: anything a
+    designer needs to finish a job (QR, export, save) must be a static import. Only
+    genuinely huge deps may stay lazy (currently just `@imgly/background-removal`, ~24MB
+    of WASM), and `main.jsx` has a `vite:preloadError` listener that tells the user to
+    save + refresh instead of failing silently. Never auto-reload there — it would discard
+    unsaved canvas work.
+
+12. **Every async UI handler needs a `catch` that surfaces the error.** The QR bug above
+    stayed invisible for so long because `addSavedQR` was `try { … } finally { … }` with
+    no catch — the rejection vanished and the button just "did nothing". Silent failure in
+    an internal tool means the designer blames themselves and works around it instead of
+    reporting it. Pattern: `catch (err) { setError(err.message || '<action> failed') }`.
+
 ---
 
 ## Environment variables (set in Netlify → Site settings → Env vars)
@@ -215,8 +259,11 @@ Goal: a scanned QR must redirect fast and never time out.
 - Inspect Formaloo: see the auth flow above; slug is `CGQse2u9`, not the public `6n4h9c`.
 
 ## Status / TODO ideas
-Done: orders inbox, prefill logo+QR, dynamic QR system, admin panel, white/black stand,
-zoom/pan, PDF+TIFF+Drive export (guides excluded), mark-complete, Netlify+Supabase deploy.
-Not done: real business-card template (still placeholder SVG), multi-product sequencing
-(Stand+Card in one order), email mockup to client for approval, Formaloo webhook for live
-inbox updates, Supabase Pro / edge-redirect for max QR reliability.
+Done: orders inbox, prefill logo+QR, dynamic QR system, admin panel, real branded
+templates for **all** products (white/black stand + white/black card front&back),
+5-stage order status (pending → pending_approval → pending_print → done / skipped),
+standalone jobs (design work not tied to a Formaloo order), design library + QR variants
++ duplicate, zoom/pan, PDF+TIFF+Drive export (guides excluded), Netlify+Supabase deploy,
+static bundling of QR/PDF/TIFF libs (Gotcha #11).
+Not done: multi-product sequencing (Stand+Card in one guided flow), email mockup to
+client for approval, Supabase Pro / edge-redirect for max QR reliability.
