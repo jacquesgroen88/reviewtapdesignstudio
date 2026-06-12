@@ -1,5 +1,11 @@
 // Shared QR generation (used by QRPanel and the editor's variant generator)
 
+// Static import (NOT dynamic): a deploy rotates chunk hashes, and an
+// already-open tab can no longer fetch the old lazy chunk — QR add then
+// fails with "Failed to fetch dynamically imported module". Bundling it
+// into the main bundle makes QR generation immune to redeploys.
+import QRCodeStyling from 'qr-code-styling'
+
 // Where dynamic QR codes redirect through. Override with VITE_QR_BASE_URL
 // (e.g. https://link.reviewtap.co.za/r).
 export const QR_BASE_URL = import.meta.env.VITE_QR_BASE_URL || `${window.location.origin}/r`
@@ -13,7 +19,6 @@ export const QR_STYLES = [
 ]
 
 export async function generateStyledQR(data, { fg, bg, ec, styleId, width = 600 }) {
-  const QRCodeStyling = (await import('qr-code-styling')).default
   const preset = QR_STYLES.find(s => s.id === styleId) || QR_STYLES[0]
   const qr = new QRCodeStyling({
     width, height: width, data, margin: 8,

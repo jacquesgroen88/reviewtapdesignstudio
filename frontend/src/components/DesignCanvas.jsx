@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { fabric } from 'fabric'
+// Static imports (NOT dynamic): a deploy rotates chunk hashes, and an
+// already-open tab can no longer fetch old lazy chunks — PDF/TIFF export
+// then fails. Bundling these makes export immune to redeploys.
+import { jsPDF } from 'jspdf'
+import UTIF from 'utif'
 import { DISPLAY_SCALE } from '../lib/products.js'
 import { generateStyledQR, QR_BASE_URL } from '../lib/qr.js'
 import { useHistory } from '../hooks/useHistory.js'
@@ -277,7 +282,6 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   async function handleDownloadPDF() {
     setExporting(true)
     try {
-      const { jsPDF } = await import('jspdf')
       let pdf
       for (let i = 0; i < layout.length; i++) {
         const e = layout[i]
@@ -313,7 +317,6 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   async function handleDownloadTIFF() {
     setExporting(true)
     try {
-      const UTIF = (await import('utif')).default
       for (const e of layout) {
         const cv = await exactFaceCanvas(e, e.face.template)
         const id = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height)

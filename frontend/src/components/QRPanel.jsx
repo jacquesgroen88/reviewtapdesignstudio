@@ -100,8 +100,11 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
 
   async function addSavedQR(qr) {
     setWorking(true)
+    setError(null)
     try {
       await renderQRtoCanvas(`${BASE_URL}/${qr.id}`, `QR — ${qr.label}`)
+    } catch (err) {
+      setError(err.message || 'Failed to add QR to canvas')
     } finally { setWorking(false) }
   }
 
