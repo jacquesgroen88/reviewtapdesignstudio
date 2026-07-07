@@ -17,7 +17,7 @@ const MAX_ZOOM = 4.0
 const ZOOM_STEP = 0.25
 const GAP_FULL = 120   // gap between side-by-side panels, full-res px
 
-export default function DesignCanvas({ product, initialVariantId, jobName, prefill, onOrderComplete }) {
+export default function DesignCanvas({ product, initialVariantId, jobName, prefill, onFirstSave, onOrderComplete }) {
   const canvasElRef = useRef(null)
   const scrollRef   = useRef(null)
   const fabricRef   = useRef(null)
@@ -37,7 +37,21 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   const [exportMsg,   setExportMsg]   = useState(null)
   const [currentDesignId, setCurrentDesignId] = useState(prefill?.designId || null)
   const [showVariants, setShowVariants] = useState(false)
-  const [designName, setDesignName] = useState(prefill?.savedDesign?.name || prefill?.designName || (jobName ? `${jobName} – ${product.name}` : `${product.name} design`))
+  // New designs auto-name as "{order#} - {Type} - {Company}", e.g. "1703 - Stand - ABC Company".
+  // Order # comes from the linked order; Type from the product; Company is the editable part —
+  // for multi-unit/multi-company orders, just rename the company in the field below. Falls back
+  // gracefully to company-only (studio jobs) or the product name when nothing is known.
+  function buildDefaultName() {
+    const type    = product.id === 'card' ? 'Card' : 'Stand'
+    const order   = String(prefill?.orderNumber || '').replace(/^#/, '').trim()
+    const company = String(prefill?.companyName || jobName || '').trim()
+    const parts = []
+    if (order) parts.push(order)
+    parts.push(type)
+    if (company) parts.push(company)
+    return parts.length > 1 ? parts.join(' - ') : `${product.name} design`
+  }
+  const [designName, setDesignName] = useState(prefill?.savedDesign?.name || prefill?.designName || buildDefaultName())
 
   const { snapshot, undo, redo, canUndo, canRedo, clear } = useHistory(fabricRef)
 
@@ -375,6 +389,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     if (!res.ok) throw new Error(await res.text())
     const d = await res.json()
     setCurrentDesignId(d.id)
+    onFirstSave?.(d.id)   // put the new design id in the URL (refresh-safe)
     return d.id
   }
   // Instant rename for an already-saved design (on blur of the name field)
@@ -382,15 +397,25 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     if (!currentDesignId) return
     const name = (designName || '').trim()
     if (!name) return
-    await fetch(`/api/designs/${currentDesignId}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
-    }).catch(() => {})
+    try {
+      const res = await fetch(`/api/designs/${currentDesignId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+      })
+      if (!res.ok) throw new Error(await res.text())
+    } catch (err) {
+      showMsg('error', `Rename failed — the saved design still has its old name (${err.message || 'network error'})`)
+    }
   }
   async function setStatus(status) {
     if (!prefill?.rowSlug) return
-    await fetch(`/api/orders/${prefill.rowSlug}/status`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
-    }).catch(() => {})
+    try {
+      const res = await fetch(`/api/orders/${prefill.rowSlug}/status`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
+      })
+      if (!res.ok) throw new Error(await res.text())
+    } catch {
+      showMsg('error', 'Design saved, but updating the order status failed — set it manually on the Orders tab')
+    }
   }
   async function handleSaveDesign() {
     setExporting(true)
@@ -418,6 +443,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       const d = await res.json()
       setCurrentDesignId(d.id)
       setDesignName(name)
+      onFirstSave?.(d.id)   // URL now points at the copy we're editing
       showMsg('success', 'Duplicated — now editing the copy. Swap the QR and Save.')
     } catch (err) { showMsg('error', `Duplicate failed: ${err.message}`) }
     finally { setExporting(false) }

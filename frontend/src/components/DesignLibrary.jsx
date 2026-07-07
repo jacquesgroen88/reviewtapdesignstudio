@@ -25,21 +25,40 @@ export default function DesignLibrary({ onNewDesign, onOpenDesign }) {
   async function saveRename(id) {
     const name = draft.trim()
     if (name) {
-      await fetch(`/api/designs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
-      setDesigns(prev => prev.map(d => d.id === id ? { ...d, name } : d))
+      try {
+        const res = await fetch(`/api/designs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+        if (!res.ok) throw new Error(await res.text())
+        setDesigns(prev => prev.map(d => d.id === id ? { ...d, name } : d))
+        setError(null)
+      } catch (err) {
+        setError(`Rename failed: ${err.message || 'network error'}`)
+      }
     }
     setEditing(null)
   }
 
   async function duplicate(d) {
-    const res = await fetch(`/api/designs/${d.id}/duplicate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
-    if (res.ok) { const copy = await res.json(); setDesigns(prev => [copy, ...prev]) }
+    try {
+      const res = await fetch(`/api/designs/${d.id}/duplicate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+      if (!res.ok) throw new Error(await res.text())
+      const copy = await res.json()
+      setDesigns(prev => [copy, ...prev])
+      setError(null)
+    } catch (err) {
+      setError(`Duplicate failed: ${err.message || 'network error'}`)
+    }
   }
 
   async function remove(d) {
     if (!confirm(`Delete “${d.name}”?`)) return
-    await fetch(`/api/designs/${d.id}`, { method: 'DELETE' })
-    setDesigns(prev => prev.filter(x => x.id !== d.id))
+    try {
+      const res = await fetch(`/api/designs/${d.id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error(await res.text())
+      setDesigns(prev => prev.filter(x => x.id !== d.id))
+      setError(null)
+    } catch (err) {
+      setError(`Delete failed: ${err.message || 'network error'} — the design is still in the library`)
+    }
   }
 
   const filtered = designs.filter(d => d.name.toLowerCase().includes(search.toLowerCase()))

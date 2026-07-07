@@ -3,6 +3,11 @@ import QRCode from 'qrcode'
 
 const BASE_URL = import.meta.env.VITE_QR_BASE_URL || `${window.location.origin}/r`
 
+const fmtDate = (iso) => iso
+  ? new Date(iso).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })
+  : '—'
+const isoDay = (iso) => (iso ? new Date(iso) : new Date()).toISOString().slice(0, 10)
+
 export default function AdminPanel() {
   const [qrCodes,   setQrCodes]   = useState([])
   const [loading,   setLoading]   = useState(true)
@@ -11,11 +16,13 @@ export default function AdminPanel() {
   const [editTarget, setEditTarget] = useState(null)   // qr object being edited
   const [showImport, setShowImport] = useState(false)
   const [msg, setMsg] = useState(null)
+  const [sortDesc, setSortDesc] = useState(true)       // created_at sort direction
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
       const res = await fetch('/api/qr')
+      if (!res.ok) throw new Error(await res.text())
       setQrCodes(await res.json())
     } catch { setError('Could not connect to backend. Is it running?') }
     finally  { setLoading(false) }
@@ -30,25 +37,57 @@ export default function AdminPanel() {
 
   async function handleDelete(id, label) {
     if (!confirm(`Delete "${label}"? This cannot be undone.`)) return
-    await fetch(`/api/qr/${id}`, { method: 'DELETE' })
-    showMsg('success', `"${label}" deleted`)
+    try {
+      const res = await fetch(`/api/qr/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error(await res.text())
+      showMsg('success', `"${label}" deleted`)
+    } catch (err) {
+      showMsg('error', `Delete failed: ${err.message || 'network error'}`)
+    }
     load()
   }
 
   async function copyURL(id) {
-    const url = `${BASE_URL}/${id}`
-    await navigator.clipboard.writeText(url)
-    showMsg('success', 'URL copied to clipboard')
+    try {
+      await navigator.clipboard.writeText(`${BASE_URL}/${id}`)
+      showMsg('success', 'URL copied to clipboard')
+    } catch {
+      showMsg('error', 'Could not copy — copy it manually: ' + `${BASE_URL}/${id}`)
+    }
   }
 
   async function downloadQR(qr) {
-    const url     = `${BASE_URL}/${qr.id}`
-    const dataUrl = await QRCode.toDataURL(url, { width: 600, margin: 1, errorCorrectionLevel: 'M' })
-    const a = document.createElement('a')
-    a.href = dataUrl
-    a.download = `${qr.label.replace(/[^a-zA-Z0-9]/g, '_')}_QR.png`
-    a.click()
+    try {
+      const url     = `${BASE_URL}/${qr.id}`
+      const dataUrl = await QRCode.toDataURL(url, { width: 600, margin: 1, errorCorrectionLevel: 'M' })
+      const a = document.createElement('a')
+      a.href = dataUrl
+      a.download = `qr_${qr.label.replace(/[^a-zA-Z0-9]/g, '_')}_${qr.id}_${isoDay(qr.created_at)}.png`
+      a.click()
+    } catch (err) {
+      showMsg('error', `QR download failed: ${err.message || 'unknown error'}`)
+    }
   }
+
+  // Full library dump for audits/reporting — dates included
+  function exportCSV() {
+    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
+    const rows = [
+      ['id', 'label', 'short_url', 'destination', 'scan_count', 'created_at', 'updated_at'],
+      ...qrCodes.map(q => [q.id, q.label, `${BASE_URL}/${q.id}`, q.destination, q.scan_count, q.created_at, q.updated_at]),
+    ]
+    const csv = rows.map(r => r.map(esc).join(',')).join('\r\n')
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+    a.download = `reviewtap-qr-codes_${isoDay()}.csv`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  const sorted = [...qrCodes].sort((a, b) => {
+    const d = new Date(a.created_at || 0) - new Date(b.created_at || 0)
+    return sortDesc ? -d : d
+  })
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8 fade-in">
@@ -61,6 +100,12 @@ export default function AdminPanel() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button className="btn-ghost text-sm" onClick={exportCSV} disabled={!qrCodes.length} title="Download all QR codes as CSV (with created dates)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Export CSV
+          </button>
           <button className="btn-ghost text-sm" onClick={() => setShowImport(true)}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
@@ -110,13 +155,18 @@ export default function AdminPanel() {
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Label</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Short URL</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Destination</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  <button onClick={() => setSortDesc(d => !d)} className="inline-flex items-center gap-1 uppercase tracking-wide hover:text-gray-700" title="Sort by created date">
+                    Created {sortDesc ? '↓' : '↑'}
+                  </button>
+                </th>
                 <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Scans</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody>
-              {qrCodes.map((qr, i) => (
-                <tr key={qr.id} className={`border-b border-gray-50 hover:bg-gray-50/60 transition-colors ${i === qrCodes.length - 1 ? 'border-b-0' : ''}`}>
+              {sorted.map((qr, i) => (
+                <tr key={qr.id} className={`border-b border-gray-50 hover:bg-gray-50/60 transition-colors ${i === sorted.length - 1 ? 'border-b-0' : ''}`}>
                   <td className="px-4 py-3 font-medium text-gray-800">{qr.label}</td>
                   <td className="px-4 py-3">
                     <code className="text-xs text-brand-600 bg-brand-50 px-2 py-0.5 rounded font-mono">
@@ -128,6 +178,9 @@ export default function AdminPanel() {
                       className="text-xs text-gray-500 hover:text-gray-800 truncate block max-w-[200px]" title={qr.destination}>
                       {qr.destination}
                     </a>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-xs text-gray-500" title={qr.created_at || ''}>{fmtDate(qr.created_at)}</span>
                   </td>
                   <td className="px-4 py-3 text-right">
                     <span className="text-sm font-semibold text-gray-700">{qr.scan_count.toLocaleString()}</span>

@@ -66,12 +66,17 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
   async function updateStatus(rowSlug, status) {
     setUpdating(rowSlug)
     try {
-      await fetch(`/api/orders/${rowSlug}/status`, {
+      const res = await fetch(`/api/orders/${rowSlug}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       })
+      if (!res.ok) throw new Error(await res.text())
       setOrders(prev => prev.map(o => o.rowSlug === rowSlug ? { ...o, status } : o))
+      setError(null)
+    } catch (err) {
+      // Status stays unchanged in the UI — never show a state the backend didn't accept
+      setError(`Could not update the order status: ${err.message || 'network error'}`)
     } finally { setUpdating(null) }
   }
 

@@ -148,7 +148,10 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
                 <div key={qr.id} className="flex items-center gap-2 p-2 rounded-xl border border-gray-100 hover:bg-gray-50 transition-colors">
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium text-gray-800 truncate">{qr.label}</p>
-                    <p className="text-xs text-gray-400 font-mono">/r/{qr.id} · {qr.scan_count ?? 0} scans</p>
+                    <p className="text-xs text-gray-400 font-mono">
+                      /r/{qr.id} · {qr.scan_count ?? 0} scans
+                      {qr.created_at && <> · {new Date(qr.created_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })}</>}
+                    </p>
                   </div>
                   <button onClick={() => addSavedQR(qr)} disabled={working}
                     className="shrink-0 px-2.5 py-1 rounded-lg text-xs font-medium bg-brand-50 text-brand-600 hover:bg-brand-100 transition-colors disabled:opacity-50">
