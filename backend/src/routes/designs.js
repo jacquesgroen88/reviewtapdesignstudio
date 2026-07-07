@@ -1,13 +1,20 @@
 import express from 'express'
 import { nanoid } from 'nanoid'
-import { listDesigns, getDesign, createDesign, updateDesign, deleteDesign } from '../services/database.js'
+import { listDesigns, getDesign, createDesign, updateDesign, deleteDesign, getAllOrderStatuses } from '../services/database.js'
 
 const router = express.Router()
 
 // Library list (metadata only). ?owner=<slug> to scope to one order/job.
+// Each design linked to an order carries that order's status as order_status
+// (e.g. pending_print = client approved, ready to print) for library filters.
 router.get('/', async (req, res) => {
   try {
-    res.json(await listDesigns({ owner: req.query.owner }))
+    const [designs, statuses] = await Promise.all([
+      listDesigns({ owner: req.query.owner }),
+      getAllOrderStatuses(),
+    ])
+    const statusBySlug = Object.fromEntries(statuses.map(s => [s.row_slug, s.status]))
+    res.json(designs.map(d => ({ ...d, order_status: d.owner_slug ? statusBySlug[d.owner_slug] || 'pending' : null })))
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
 
