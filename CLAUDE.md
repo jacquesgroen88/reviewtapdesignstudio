@@ -267,3 +267,13 @@ standalone jobs (design work not tied to a Formaloo order), design library + QR 
 static bundling of QR/PDF/TIFF libs (Gotcha #11).
 Not done: multi-product sequencing (Stand+Card in one guided flow), email mockup to
 client for approval, Supabase Pro / edge-redirect for max QR reliability.
+
+---
+
+## Related & Connections
+
+- **Part of**: ReviewTap (product pillar) → Mission Control portfolio
+- **Brand**: ReviewTap (reviewtap.co.za) — this studio produces print artwork for ReviewTap table stands and business cards
+- **Tech stack**: React 18 + Vite, Fabric.js canvas editor, Tailwind CSS, Supabase (auth + storage), Netlify Functions, Formaloo order intake
+- **Workflow lineage**: client order via Formaloo → designer places logo + dynamic QR → print-ready export → fulfillment (`Reviewtap/Reviewtap Fufillment/`)
+- **See also**: ReviewTap Ad Studio (`Reviewtap/Reviewtap Ads/`), ReviewTap Link Generator, ReviewTap Product Designer, card-builder (core product repo)
