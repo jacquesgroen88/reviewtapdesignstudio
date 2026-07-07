@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import QRCode from 'qrcode'
+// Static imports (Gotcha 11): QR generation must live in the main bundle
+import { generateStyledQR, styleToGenOpts, STAND_PRESETS, PLAIN_STYLE, QR_STYLES } from '../lib/qr.js'
 
 const BASE_URL = import.meta.env.VITE_QR_BASE_URL || `${window.location.origin}/r`
 
@@ -17,6 +18,7 @@ export default function AdminPanel() {
   const [showImport, setShowImport] = useState(false)
   const [msg, setMsg] = useState(null)
   const [sortDesc, setSortDesc] = useState(true)       // created_at sort direction
+  const [downloadTarget, setDownloadTarget] = useState(null)   // qr for the styled-download modal
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -56,18 +58,6 @@ export default function AdminPanel() {
     }
   }
 
-  async function downloadQR(qr) {
-    try {
-      const url     = `${BASE_URL}/${qr.id}`
-      const dataUrl = await QRCode.toDataURL(url, { width: 600, margin: 1, errorCorrectionLevel: 'M' })
-      const a = document.createElement('a')
-      a.href = dataUrl
-      a.download = `qr_${qr.label.replace(/[^a-zA-Z0-9]/g, '_')}_${qr.id}_${isoDay(qr.created_at)}.png`
-      a.click()
-    } catch (err) {
-      showMsg('error', `QR download failed: ${err.message || 'unknown error'}`)
-    }
-  }
 
   // Full library dump for audits/reporting — dates included
   function exportCSV() {
@@ -190,7 +180,7 @@ export default function AdminPanel() {
                       <ActionBtn title="Copy short URL" onClick={() => copyURL(qr.id)}>
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                       </ActionBtn>
-                      <ActionBtn title="Download QR PNG" onClick={() => downloadQR(qr)}>
+                      <ActionBtn title="Download QR PNG (choose style)" onClick={() => setDownloadTarget(qr)}>
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                       </ActionBtn>
                       <ActionBtn title="Edit" onClick={() => { setEditTarget(qr); setShowForm(true) }}>
@@ -218,6 +208,15 @@ export default function AdminPanel() {
         />
       )}
 
+      {/* Styled download modal */}
+      {downloadTarget && (
+        <DownloadModal
+          qr={downloadTarget}
+          onClose={() => setDownloadTarget(null)}
+          onMsg={showMsg}
+        />
+      )}
+
       {/* Bulk import modal */}
       {showImport && (
         <BulkImportModal
@@ -237,6 +236,7 @@ function QRFormModal({ initial, onClose, onSaved, onMsg }) {
   const [label,       setLabel]       = useState(initial?.label       || '')
   const [destination, setDestination] = useState(initial?.destination || '')
   const [customId,    setCustomId]    = useState(initial?.id          || '')
+  const [style,       setStyle]       = useState(initial?.default_style ?? null)   // null = plain
   const [saving, setSaving] = useState(false)
   const [err,    setErr]    = useState('')
 
@@ -249,7 +249,7 @@ function QRFormModal({ initial, onClose, onSaved, onMsg }) {
         const res = await fetch(`/api/qr/${initial.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ label: label.trim(), destination: destination.trim() }),
+          body: JSON.stringify({ label: label.trim(), destination: destination.trim(), style }),
         })
         if (!res.ok) throw new Error(await res.text())
         onMsg('success', 'QR code updated')
@@ -257,7 +257,7 @@ function QRFormModal({ initial, onClose, onSaved, onMsg }) {
         const res = await fetch('/api/qr', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ label: label.trim(), destination: destination.trim(), id: customId.trim() || undefined }),
+          body: JSON.stringify({ label: label.trim(), destination: destination.trim(), id: customId.trim() || undefined, style }),
         })
         if (!res.ok) { const d = await res.json(); throw new Error(d.error) }
         onMsg('success', 'QR code created')
@@ -293,6 +293,7 @@ function QRFormModal({ initial, onClose, onSaved, onMsg }) {
               <input className="input-field font-mono text-sm" placeholder="e.g. coffeehouse (auto-generated if blank)" value={customId} onChange={e => setCustomId(e.target.value)} />
             </div>
           )}
+          <StyleSection style={style} onChange={setStyle} previewData={`${BASE_URL}/${initial?.id || 'preview'}`} />
         </div>
 
         {err && <p className="text-xs text-red-500">{err}</p>}
@@ -376,6 +377,208 @@ function BulkImportModal({ onClose, onImported, onMsg }) {
           <button className="btn-secondary flex-1" onClick={onClose}>Cancel</button>
           <button className="btn-primary flex-1" onClick={handleImport} disabled={importing || !text.trim()}>
             {importing ? 'Importing…' : `Import ${text.trim().split('\n').filter(Boolean).length} rows`}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── QR styling (presentation-only — never changes the encoded /r/<id> URL) ───
+
+const norm = (s) => ({ ...PLAIN_STYLE, ...(s || {}) })
+const sameStyle = (a, b) => JSON.stringify(norm(a)) === JSON.stringify(norm(b))
+
+// Live preview of a styled QR (checkered backdrop so transparency is visible)
+function StylePreview({ style, data, size = 88 }) {
+  const [src, setSrc] = useState(null)
+  useEffect(() => {
+    let cancelled = false
+    const t = setTimeout(() => {
+      generateStyledQR(data, styleToGenOpts(style, 200))
+        .then(d => { if (!cancelled) setSrc(d) })
+        .catch(() => {})
+    }, 150)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [JSON.stringify(style), data])
+  return (
+    <div className="rounded-lg border border-gray-100 shrink-0" style={{
+      width: size, height: size,
+      background: 'repeating-conic-gradient(#f3f4f6 0% 25%, #ffffff 0% 50%) 50% / 12px 12px',
+    }}>
+      {src && <img src={src} alt="QR preview" className="w-full h-full object-contain" />}
+    </div>
+  )
+}
+
+// Full custom controls (shape, colours, transparency, error correction)
+function StyleCustomEditor({ value, onChange }) {
+  const v = norm(value)
+  const set = (patch) => onChange({ ...v, ...patch })
+  return (
+    <div className="space-y-2 pt-2">
+      <div className="grid grid-cols-4 gap-1">
+        {QR_STYLES.map(s => (
+          <button key={s.id} type="button" onClick={() => set({ styleId: s.id })}
+            className={`py-1.5 rounded-lg text-xs font-medium transition-colors
+              ${v.styleId === s.id ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+            {s.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-3 items-center">
+        <label className="flex items-center gap-1.5 text-xs text-gray-600">
+          QR colour
+          <input type="color" value={v.fg} onChange={e => set({ fg: e.target.value })} className="w-7 h-7 rounded border border-gray-200 cursor-pointer" />
+        </label>
+        <label className={`flex items-center gap-1.5 text-xs text-gray-600 ${v.transparent ? 'opacity-40 pointer-events-none' : ''}`}>
+          Background
+          <input type="color" value={v.bg} onChange={e => set({ bg: e.target.value })} className="w-7 h-7 rounded border border-gray-200 cursor-pointer" />
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
+          <input type="checkbox" checked={v.transparent} onChange={e => set({ transparent: e.target.checked })} />
+          Transparent
+        </label>
+      </div>
+      <div className="flex gap-1 items-center">
+        <span className="text-xs text-gray-400 mr-1">Error correction</span>
+        {['L','M','Q','H'].map(l => (
+          <button key={l} type="button" onClick={() => set({ ec: l })}
+            className={`w-7 py-1 rounded-lg text-xs font-semibold transition-colors
+              ${v.ec === l ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+            {l}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// Preset chips + optional custom editor, used in the create/edit modal.
+// `style` is null for plain, or a style object; saved as the code's default.
+function StyleSection({ style, onChange, previewData }) {
+  const isPlain = style === null || sameStyle(style, null)
+  const activePreset = STAND_PRESETS.find(p => style && sameStyle(style, p.style))?.id
+    || (isPlain ? 'plain' : 'custom')
+  const [showCustom, setShowCustom] = useState(activePreset === 'custom')
+  return (
+    <div>
+      <label className="label">Style <span className="text-gray-400 font-normal">(saved as this code's default — look only, scans are unaffected)</span></label>
+      <div className="flex gap-3 items-start">
+        <div className="flex-1 space-y-2">
+          <div className="flex flex-wrap gap-1">
+            {STAND_PRESETS.map(p => (
+              <button key={p.id} type="button" onClick={() => { onChange(p.style); setShowCustom(false) }}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors
+                  ${activePreset === p.id ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                {p.label}
+              </button>
+            ))}
+            <button type="button" onClick={() => { onChange(null); setShowCustom(false) }}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors
+                ${activePreset === 'plain' ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+              Plain
+            </button>
+            <button type="button" onClick={() => { setShowCustom(true); if (isPlain) onChange(norm(style)) }}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors
+                ${activePreset === 'custom' || showCustom ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+              Customise
+            </button>
+          </div>
+          {showCustom && <StyleCustomEditor value={style} onChange={onChange} />}
+        </div>
+        <StylePreview style={style} data={previewData} />
+      </div>
+    </div>
+  )
+}
+
+// ── Styled download modal ─────────────────────────────────────────────────────
+
+function DownloadModal({ qr, onClose, onMsg }) {
+  const hasSaved = !!qr.default_style
+  const [choice, setChoice] = useState(hasSaved ? 'saved' : 'plain')
+  const [custom, setCustom] = useState(norm(qr.default_style))
+  const [size,   setSize]   = useState(1200)
+  const [busy,   setBusy]   = useState(false)
+  const url = `${BASE_URL}/${qr.id}`
+
+  const CHOICES = [
+    ...(hasSaved ? [{ id: 'saved', label: 'Saved style' }] : []),
+    ...STAND_PRESETS.map(p => ({ id: p.id, label: p.label })),
+    { id: 'plain',  label: 'Plain' },
+    { id: 'custom', label: 'Customise' },
+  ]
+  const styleFor = (c) =>
+    c === 'saved'  ? qr.default_style :
+    c === 'plain'  ? null :
+    c === 'custom' ? custom :
+    STAND_PRESETS.find(p => p.id === c)?.style || null
+
+  async function download(c) {
+    setBusy(true)
+    try {
+      const dataUrl = await generateStyledQR(url, styleToGenOpts(styleFor(c), size))
+      const a = document.createElement('a')
+      a.href = dataUrl
+      a.download = `qr_${qr.label.replace(/[^a-zA-Z0-9]/g, '_')}_${qr.id}_${c}_${isoDay(qr.created_at)}.png`
+      a.click()
+    } catch (err) {
+      onMsg('error', `Download failed: ${err.message || 'unknown error'}`)
+    } finally { setBusy(false) }
+  }
+
+  async function downloadBothStands() {
+    await download('white-stand')
+    await download('black-stand')
+    onMsg('success', 'Downloaded white + black stand versions')
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="card w-full max-w-md p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Download QR</h2>
+            <p className="text-xs text-gray-400 mt-0.5">{qr.label} · /r/{qr.id} — every style scans to the same place</p>
+          </div>
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-300 hover:text-gray-600 hover:bg-gray-100">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+
+        <div className="flex gap-3 items-start">
+          <div className="flex-1 space-y-2">
+            <div className="flex flex-wrap gap-1">
+              {CHOICES.map(c => (
+                <button key={c.id} type="button" onClick={() => setChoice(c.id)}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors
+                    ${choice === c.id ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            {choice === 'custom' && <StyleCustomEditor value={custom} onChange={setCustom} />}
+            <div className="flex gap-1 items-center pt-1">
+              <span className="text-xs text-gray-400 mr-1">Size</span>
+              {[600, 1200].map(s => (
+                <button key={s} type="button" onClick={() => setSize(s)}
+                  className={`px-2 py-1 rounded-lg text-xs font-semibold transition-colors
+                    ${size === s ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+                  {s}px
+                </button>
+              ))}
+            </div>
+          </div>
+          <StylePreview style={styleFor(choice)} data={url} size={104} />
+        </div>
+
+        <div className="flex gap-2 pt-1">
+          <button className="btn-secondary flex-1 text-sm" onClick={downloadBothStands} disabled={busy}>
+            White + black versions
+          </button>
+          <button className="btn-primary flex-1 text-sm" onClick={() => download(choice)} disabled={busy}>
+            {busy ? 'Generating…' : 'Download PNG'}
           </button>
         </div>
       </div>

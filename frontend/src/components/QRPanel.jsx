@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { QR_STYLES, generateStyledQR, QR_BASE_URL as BASE_URL } from '../lib/qr.js'
+import { QR_STYLES, generateStyledQR, styleToGenOpts, QR_BASE_URL as BASE_URL } from '../lib/qr.js'
 
 let qrIdCounter = 0
 
@@ -67,8 +67,12 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
     return () => { cancelled = true; clearTimeout(t) }
   }, [destination, fgColor, bgFill, ecLevel, styleId, activeTab])
 
-  async function renderQRtoCanvas(encodeUrl, name) {
-    const dataUrl = await generateStyledQR(encodeUrl, { fg: fgColor, bg: bgFill, ec: ecLevel, styleId, width: 600 })
+  // styleOverride: render with a saved default_style instead of the panel state
+  async function renderQRtoCanvas(encodeUrl, name, styleOverride) {
+    const opts = styleOverride
+      ? styleToGenOpts(styleOverride, 600)
+      : { fg: fgColor, bg: bgFill, ec: ecLevel, styleId, width: 600 }
+    const dataUrl = await generateStyledQR(encodeUrl, opts)
     onQRReady({
       id: `qr_${++qrIdCounter}`, name,
       originalSrc: dataUrl, processedSrc: dataUrl, bgRemoved: false, isQR: true,
@@ -83,10 +87,12 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
       if (backendDown) {
         await renderQRtoCanvas(destination.trim(), `QR — ${label.trim()}`)
       } else {
+        // The style used here is saved as the code's default (presentation only)
+        const style = { styleId, fg: fgColor, bg: bgColor, transparent: transparentBg, ec: ecLevel }
         const res = await fetch('/api/qr', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ label: label.trim(), destination: destination.trim() }),
+          body: JSON.stringify({ label: label.trim(), destination: destination.trim(), style }),
         })
         if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'create failed') }
         const qr = await res.json()
@@ -102,7 +108,16 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
     setWorking(true)
     setError(null)
     try {
-      await renderQRtoCanvas(`${BASE_URL}/${qr.id}`, `QR — ${qr.label}`)
+      const saved = qr.default_style
+      if (saved) {
+        // Reflect the saved default in the panel controls, then render with it
+        if (saved.styleId)             setStyleId(saved.styleId)
+        if (saved.fg)                  setFgColor(saved.fg)
+        if (saved.bg)                  setBgColor(saved.bg)
+        if (saved.transparent != null) setTransparentBg(!!saved.transparent)
+        if (saved.ec)                  setEcLevel(saved.ec)
+      }
+      await renderQRtoCanvas(`${BASE_URL}/${qr.id}`, `QR — ${qr.label}`, saved || undefined)
     } catch (err) {
       setError(err.message || 'Failed to add QR to canvas')
     } finally { setWorking(false) }

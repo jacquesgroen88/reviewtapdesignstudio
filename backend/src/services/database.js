@@ -32,17 +32,20 @@ export async function getQRCode(id) {
   return data
 }
 
-export async function createQRCode({ id, label, destination }) {
+export async function createQRCode({ id, label, destination, defaultStyle }) {
+  const row = { id, label, destination }
+  if (defaultStyle !== undefined) row.default_style = defaultStyle
   const { data, error } = await getClient()
-    .from('qr_codes').insert({ id, label, destination }).select().single()
+    .from('qr_codes').insert(row).select().single()
   if (error) throw error
   return data
 }
 
-export async function updateQRCode(id, { label, destination }) {
+export async function updateQRCode(id, { label, destination, defaultStyle }) {
   const updates = { updated_at: new Date().toISOString() }
-  if (label       !== undefined) updates.label       = label
-  if (destination !== undefined) updates.destination = destination
+  if (label        !== undefined) updates.label         = label
+  if (destination  !== undefined) updates.destination   = destination
+  if (defaultStyle !== undefined) updates.default_style = defaultStyle
   const { data, error } = await getClient()
     .from('qr_codes').update(updates).eq('id', id).select().single()
   if (error) throw error

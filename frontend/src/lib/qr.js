@@ -10,6 +10,23 @@ import QRCodeStyling from 'qr-code-styling'
 // (e.g. https://link.reviewtap.co.za/r).
 export const QR_BASE_URL = import.meta.env.VITE_QR_BASE_URL || `${window.location.origin}/r`
 
+// A saved default_style is presentation-only: {styleId, fg, bg, transparent, ec}.
+// It NEVER changes what the QR encodes — restyling can't break printed codes.
+export const PLAIN_STYLE = { styleId: 'square', fg: '#000000', bg: '#ffffff', transparent: false, ec: 'M' }
+
+// One-click presets matching the product conventions (black stands print
+// cream #fff6ea modules on black; white stands black on transparent).
+export const STAND_PRESETS = [
+  { id: 'white-stand', label: 'White stand / card', style: { styleId: 'rounded', fg: '#000000', bg: '#ffffff', transparent: true,  ec: 'M' } },
+  { id: 'black-stand', label: 'Black stand / card', style: { styleId: 'rounded', fg: '#fff6ea', bg: '#000000', transparent: false, ec: 'M' } },
+]
+
+// Convert a saved style object into generateStyledQR options
+export function styleToGenOpts(style, width = 600) {
+  const s = { ...PLAIN_STYLE, ...(style || {}) }
+  return { fg: s.fg, bg: s.transparent ? 'rgba(0,0,0,0)' : s.bg, ec: s.ec, styleId: s.styleId, width }
+}
+
 // QR shape presets → qr-code-styling dot + corner types
 export const QR_STYLES = [
   { id: 'square',  label: 'Square',  dot: 'square',         corner: 'square' },

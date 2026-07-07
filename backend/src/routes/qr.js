@@ -4,6 +4,21 @@ import { listQRCodes, getQRCode, createQRCode, updateQRCode, deleteQRCode, bulkI
 
 const router = express.Router()
 
+// Presentation-only styling saved with a code. Whitelist keys so arbitrary
+// JSON can't be stored; null clears the style (back to plain black/white).
+function sanitizeStyle(style) {
+  if (style === null) return null
+  if (typeof style !== 'object' || Array.isArray(style)) return undefined
+  const { styleId, fg, bg, transparent, ec } = style
+  const out = {}
+  if (typeof styleId === 'string')     out.styleId = styleId.slice(0, 20)
+  if (typeof fg === 'string')          out.fg = fg.slice(0, 30)
+  if (typeof bg === 'string')          out.bg = bg.slice(0, 30)
+  if (typeof transparent === 'boolean') out.transparent = transparent
+  if (typeof ec === 'string')          out.ec = ec.slice(0, 1)
+  return Object.keys(out).length ? out : undefined
+}
+
 router.get('/', async (req, res) => {
   res.json(await listQRCodes())
 })
@@ -26,14 +41,14 @@ function uniqueLabel(label, existing) {
 }
 
 router.post('/', async (req, res) => {
-  const { label, destination, id: customId } = req.body
+  const { label, destination, id: customId, style } = req.body
   if (!label?.trim())       return res.status(400).json({ error: 'label is required' })
   if (!destination?.trim()) return res.status(400).json({ error: 'destination is required' })
   const id = customId?.trim() || nanoid(7)
   try {
     const existing = await listQRCodes()
     const finalLabel = uniqueLabel(label.trim(), existing)
-    const qr = await createQRCode({ id, label: finalLabel, destination: destination.trim() })
+    const qr = await createQRCode({ id, label: finalLabel, destination: destination.trim(), defaultStyle: sanitizeStyle(style) })
     res.status(201).json(qr)
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'ID already exists' })
@@ -42,10 +57,10 @@ router.post('/', async (req, res) => {
 })
 
 router.patch('/:id', async (req, res) => {
-  const { label, destination } = req.body
+  const { label, destination, style } = req.body
   const qr = await getQRCode(req.params.id)
   if (!qr) return res.status(404).json({ error: 'Not found' })
-  res.json(await updateQRCode(req.params.id, { label, destination }))
+  res.json(await updateQRCode(req.params.id, { label, destination, defaultStyle: sanitizeStyle(style) }))
 })
 
 router.delete('/:id', async (req, res) => {

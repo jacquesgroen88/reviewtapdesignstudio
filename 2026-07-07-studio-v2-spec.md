@@ -292,6 +292,45 @@ create table approvals (
 
 ---
 
+## 6c. Feature G — QR styling in the QR Codes admin (added 2026-07-07)
+
+### Goal
+Choose the QR's visual design when creating it, and download any saved code in different styles later (e.g. a white-stand version and a black-stand version of the same code). Styling is presentation-only: the encoded `/r/<id>` URL never changes, so restyling never breaks printed material.
+
+### Design
+
+**1. Style picker in the New QR modal** (QR Codes tab)
+The create/edit modal gains the same styling controls the editor's QRPanel already has (shape presets square/rounded/dots/classy, foreground/background colours, transparent background, error-correction level) plus a live preview, all driven by the existing `generateStyledQR` in `lib/qr.js`. Two one-click presets sit on top:
+- **White stand/card**: black modules, transparent background
+- **Black stand/card**: cream `#fff6ea` modules on black (matches the editor's convention)
+
+The chosen style is saved with the code as its **default style**.
+
+**2. Styled downloads from the table**
+The download button opens a small popover instead of instantly downloading:
+- Preset row: White stand · Black stand · Plain (black/white, current behaviour) · the code's saved default
+- "Customise" expands the full controls (shape, colours, EC, size 600/1200 px)
+- **Download both stand versions** does white + black in one click
+- Filenames carry the style: `qr_<label>_<id>_black-stand_<created-date>.png`
+
+**3. Editor prefill**
+When a saved code with a default style is added to a canvas via QRPanel, the style controls prefill from it (still overridable per-design, since the stand colour on canvas decides).
+
+### Data model
+```sql
+alter table qr_codes add column default_style jsonb;
+-- e.g. {"styleId":"rounded","fg":"#fff6ea","bg":"#000000","transparent":false,"ec":"M"}
+```
+Null = plain (all existing codes render exactly as before). `POST /api/qr` and `PATCH /api/qr/:id` accept an optional `style` field.
+
+### Non-goals
+- Changing what the QR encodes (never).
+- SVG export (possible later; PNG at 1200 px covers print needs since qr-code-styling renders raster).
+
+**Effort**: ~0.5–1 day. No dependency on auth — can ship as Phase 1b.
+
+---
+
 ## 7. Improvement backlog (investigated)
 
 Ranked. P1 = do with the phases above; P2 = next; P3 = when it earns its keep.
@@ -324,7 +363,8 @@ Dependencies: attribution needs auth; everything else is independent. Suggested 
 
 | Phase | Contents | Effort |
 |---|---|---|
-| **1. Foundations** | Routing (Feature A) + QR created date (Feature E) + dead-code removal (I-3) + error-handling fixes (I-2) | ~2 days |
+| **1. Foundations** | Routing (Feature A) + QR created date (Feature E) + dead-code removal (I-3) + error-handling fixes (I-2) — BUILT 2026-07-07 | ~2 days |
+| **1b. QR styling** | Feature G: style picker on create, styled/preset downloads, editor prefill | 0.5–1 day |
 | **2. Auth** | Feature B end-to-end incl. DB lockdown sequence, Team page, CORS (I-1) | 2–3 days |
 | **3. Attribution** | Feature C + QR delete guard (I-4) | ~1 day |
 | **4. Crop** | Feature D | 1.5–2 days |
