@@ -188,13 +188,15 @@ Existing rows stay null and display as "Legacy". No backfill needed.
 
 ---
 
-## 5. Feature D — Logo cropping
+## 5. Feature D — Logo cropping — BUILT 2026-07-08
 
 ### Goal
 Crop an uploaded logo (trim whitespace, cut a lockup down to just the mark, straighten a rectangle out of a busy image) before or after placing it on the canvas, without losing the original.
 
 ### Design: crop modal on the original source (recommended over Fabric clipPath)
-A dedicated crop modal using `react-easy-crop` (~10 kB, actively maintained, touch-friendly), rendering the crop to a new dataURL via an offscreen canvas. Fabric `clipPath` cropping was considered and rejected: it complicates the export pipeline (`exactFaceCanvas`), the saved-design JSON schema, and undo/redo snapshots, all of which are hard-won stable code (Gotchas 7, 9, 10, 11).
+**As built**: `react-image-crop` instead of the originally-spec'd `react-easy-crop` — react-easy-crop only supports pan+zoom within a fixed-aspect frame (no drag-resize freeform rectangle), which can't trim asymmetric whitespace off a logo. react-image-crop gives a true draggable/resizable rectangle. Renders the crop to a new dataURL at the source's native pixel resolution via an offscreen canvas. Fabric `clipPath` cropping was considered and rejected: it complicates the export pipeline (`exactFaceCanvas`), the saved-design JSON schema, and undo/redo snapshots, all of which are hard-won stable code (Gotchas 7, 9, 10, 11).
+
+**Gotcha discovered while building the companion right-click menu**: Fabric.js silently swallows right-clicks (and middle-clicks) unless `fireRightClick: true` (and `fireMiddleClick: true`) is set on canvas creation — without it, no `mouse:down` listener ever sees the event, no error, nothing. This also means the existing "middle-mouse to pan" feature was dead code until this fix (added as CLAUDE.md Gotcha 13).
 
 **Flow**
 
@@ -221,12 +223,12 @@ Note: storing `originalSrc` grows the JSONB. Acceptable now; if design rows get 
 
 **Static import rule**: `react-easy-crop` is small; import it statically (Gotcha 11: anything a designer needs mid-job must not be a lazy chunk).
 
-### Right-click context menu on the canvas (added 2026-07-08 per Jacques)
-Right-clicking an asset on the canvas opens a context menu at the cursor (suppress the browser menu via `contextmenu` handler on the canvas element; Fabric identifies the target object):
-- On a **logo**: Crop… (opens the crop modal), Remove background / Restore background (toggles the existing bg-removal pipeline), Bring forward, Send backward, Delete.
+### Right-click context menu on the canvas (added 2026-07-08 per Jacques) — BUILT
+Right-clicking an asset on the canvas opens a context menu at the cursor (dedicated `CanvasContextMenu.jsx`, fixed-position, dismisses on outside click/Escape/scroll):
+- On a **logo**: Crop…, Remove background / Restore background, Bring forward, Send backward, Delete.
 - On a **QR**: Bring forward, Send backward, Delete (crop/bg-removal don't apply).
-- On empty canvas / background: no menu (browser default suppressed only over assets).
-The menu reuses the existing `Menu.jsx` component styling and calls the same handlers as LogoPanel/CanvasToolbar (single source of behaviour — the panel buttons stay). Ships as part of Feature D (crop) since the crop modal is its main payload.
+- On empty canvas / background: no menu (browser default untouched — verified).
+Calls the exact same handlers as the LogoPanel side buttons (bg-removal + crop logic lives in DesignCanvas, shared by both UIs — not duplicated).
 
 ### Acceptance criteria
 - Crop at upload and crop of an already-placed logo both work; the placed logo keeps its position and on-canvas size.
@@ -359,13 +361,40 @@ Null = plain (all existing codes render exactly as before). `POST /api/qr` and `
 
 ---
 
-## 6d. Feature H — Order number field + unified export filenames (added 2026-07-08)
+## 6d. Feature H — Order number field + unified export filenames (added 2026-07-08) — BUILT
 
 ### Order number on new designs
-The ProductPicker ("New design") gains an optional **Order #** field next to the client/job name. When a design is started from an order card it's prefilled from Formaloo; when started from the library it's manual and optional. The value is stored on the design (new nullable `order_number` text column, or carried in the auto-name) and drives naming + filenames.
+The ProductPicker ("New design") has an optional **Order #** field next to the client/job name. Prefilled from Formaloo when started from an order card; manual and optional from the library. Stored on the design (`designs.order_number`) and drives naming + filenames.
 
 ### One filename convention across ALL export paths
-`{order#}_{Client}_{Stand|Card}[_{Front|Back}][_{style}]_{YYYY-MM-DD}.{ext}` — order number omitted when absent, client falls back to the design name. Applies to: editor PDF/JPEG/TIFF/Drive exports (currently only client name + variant), bulk-export zip entries, and QR PNG downloads keep their existing (label/id/style/date) scheme. ~1 hour, lands with Phase 3.
+`{order#}_{Client}_{Stand|Card}[_{Front|Back}]_{YYYY-MM-DD}.{ext}` — order number omitted when absent, client falls back to the design name. Applies to: editor PDF/JPEG/TIFF/Drive exports, bulk-export zip entries. QR PNG downloads keep their existing (label/id/style/date) scheme.
+
+---
+
+## 6e. Feature I — See what the client sees (added 2026-07-08 per Jacques) — BUILT
+
+### Goal
+Let a designer preview the client-facing mockup view without leaving the canvas, and let anyone check the exact link a client received from the Orders tab.
+
+### Editor: Preview button
+A **Preview** button next to Approval/Save renders the live (including unsaved) canvas in mockup mode and shows it in a modal — reuses `exactFaceCanvas(entry, face.mockupTemplate || face.template)`, the exact function PDF/JPEG export and the approval page renderer both already use. One rendering code path for "what does a client ever see," reused a third time here rather than reimplemented.
+
+### Order card: View link
+Each design row shows a **View** link when it has an active (non-superseded) approval, opening `link.reviewtap.co.za/approve/<token>` in a new tab — the literal link the client received, not a facsimile.
+
+---
+
+## 6f. Manual order entry (added 2026-07-08 per Jacques) — BUILT
+
+### Goal
+Add an order to the pipeline that didn't come through the Formaloo form — a walk-in client, a one-off job, anything that needs to sit in Orders/Design Studio without a form submission.
+
+### Design
+New `manual_orders` table, deliberately shaped so every downstream join (status, designs, approvals — all keyed by `row_slug`) works identically whether the row_slug came from Formaloo or was typed in by hand. A shared `enrichOrder()` function in `routes/orders.js` replaces what used to be Formaloo-only enrichment logic, applied to both sources.
+
+**"+ New order"** button on the Orders tab opens a modal: company/client name (required), order #, logo upload (own storage bucket `manual-order-logos`), Google review URL, WhatsApp/email/phone/address, and Stand/Card ordered checkboxes. Manually-entered orders get a grey "Manual" tag and their own Edit/Delete actions (Formaloo orders have neither — they're read-only at the source).
+
+**Known scoping limit**: Formaloo orders are paginated server-side (30/page); manual orders are not (there are expected to be few), so they're shown in full on page 1 of a normal browse and always when searching, rather than being woven into Formaloo's page windows. The total count includes them, but if a user pages past page 1 without searching, manual orders already listed on page 1 don't repeat — this is a deliberate "good enough for occasional use" tradeoff, not a bug.
 
 ---
 
@@ -405,9 +434,10 @@ Dependencies: attribution needs auth; everything else is independent. Suggested 
 | **1b. QR styling** | Feature G: style picker on create, styled/preset downloads, editor prefill | 0.5–1 day |
 | **2. Auth** | Feature B end-to-end incl. DB lockdown sequence, Team page, CORS (I-1) | 2–3 days |
 | **3. Attribution** | Feature C + QR delete guard (I-4) + Feature H (order # field, unified filenames) | ~1 day |
-| **4. Crop** | Feature D | 1.5–2 days |
-| **4b. Approvals** | Feature F: approval link + WhatsApp tap-to-send, then GHL auto-send | ~1.5 days |
-| **5. Hardening** | I-5 (Supabase Pro decision or edge redirect), I-6 autosave, I-7 thumbnails, I-8 search | 2–3 days |
+| **4. Crop + context menu** | Feature D + right-click menu — BUILT 2026-07-08 | 1.5–2 days |
+| **4b. Approvals** | Feature F: approval link + WhatsApp tap-to-send, GHL auto-send env-gated — BUILT 2026-07-08 | ~1.5 days |
+| **4c. Preview + manual orders** | Feature I (client-view preview) + manual order entry — BUILT 2026-07-08 | — |
+| **5. Hardening** | I-5 (Supabase Pro — DECLINED for now by Jacques 2026-07-08; edge redirect stays the fallback QR-uptime option), I-6 autosave, I-7 thumbnails, I-8 search | 2–3 days |
 
 Each phase ends with the QR regression check (known code 302s, bogus code 404s) and a designer smoke test (open order → design → QR → export PDF).
 

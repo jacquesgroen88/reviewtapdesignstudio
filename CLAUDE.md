@@ -89,6 +89,28 @@ via `frontend/vite.config.js`. On Netlify, those paths hit functions instead.
 
 ## Key flows
 
+### Orders tab vs Design Studio tab — how they're meant to be used (clarified 2026-07-08)
+Two different mental models, on purpose:
+- **Orders = client-driven, job-shaped.** One row per client submission (Formaloo, or manually
+  entered). It's where you START work (New design), TRACK it through the status ladder
+  (Pending → Ready → Pending Approval → Pending Print → Done), SEND it for approval, and see
+  the client's answer. You live here for "what does client X need, and where is it."
+- **Design Studio = design-shaped, reusable library.** Every design ever made, independent of
+  which order it belongs to (or whether it belongs to one at all — a design can be a pure
+  library piece, never linked to a client). It's where you OPEN, DUPLICATE, or bulk-export
+  designs. You live here for "find/reuse/export artwork," not for tracking a job's status.
+  A design started from an Order is automatically linked (`owner_slug`) and shows up on both
+  screens; a design started directly from Design Studio ("New design" there) has no linked
+  order and never gets an approval-status ladder — it's for house templates, one-off jobs
+  that don't need client sign-off, or drafts you're not ready to attach to a real order yet.
+- **The status ladder only lives on the Order**, not the design. Multiple designs on one
+  order (e.g. Stand + Card) share the same status; "Send for approval" on the order card
+  bundles every design on it into one link. Sending approval from inside the editor (the
+  "Approval" button) does the same for just that one design.
+- **Rule of thumb**: if a client is involved, start from Orders. If you're building/reusing
+  artwork with no specific client attached yet (or doing bulk print-file work across many
+  already-approved jobs), use Design Studio.
+
 ### Orders → Design (prefill)
 `OrdersPanel` "Design" → `App.handleDesignOrder(order)` builds a `session.prefill` with
 `{logoUrl, googleReviewUrl, orderNumber, companyName, rowSlug, orderedStand, orderedCard}` →
@@ -223,6 +245,14 @@ button becomes **Edit** and the order stays fully reusable.
     no catch — the rejection vanished and the button just "did nothing". Silent failure in
     an internal tool means the designer blames themselves and works around it instead of
     reporting it. Pattern: `catch (err) { setError(err.message || '<action> failed') }`.
+
+13. **Fabric.js silently swallows right-clicks and middle-clicks.** `Canvas.__onMouseDown`
+    checks `checkClick(e, RIGHT_CLICK)` / `MIDDLE_CLICK` and does an early `return` unless
+    `fireRightClick: true` / `fireMiddleClick: true` were set in the `new fabric.Canvas(...)`
+    options — with neither set, no `'mouse:down'` listener EVER fires for those buttons, no
+    error, nothing. Found while building the right-click context menu (2026-07-08); the fix
+    also un-broke the existing "middle-mouse to pan" feature, which had been dead code the
+    whole time for the same reason. Both flags are now set in DesignCanvas's canvas init.
 
 ---
 
