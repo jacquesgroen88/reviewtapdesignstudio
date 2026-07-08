@@ -3,6 +3,7 @@ import Menu from './Menu.jsx'
 import { apiFetch } from '../lib/api.js'
 import { createApprovalRequest } from '../lib/approvals.js'
 import ApprovalShareModal from './ApprovalShareModal.jsx'
+import ManualOrderModal from './ManualOrderModal.jsx'
 
 const STATUS_LABELS = {
   pending:          { label: 'Pending',          color: 'bg-amber-100 text-amber-700' },
@@ -43,6 +44,7 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
   const [approvalResult,  setApprovalResult]  = useState(null)   // {result, clientName} → share modal
   const [search,      setSearch]      = useState('')   // input value
   const [searchTerm,  setSearchTerm]  = useState('')   // debounced, sent to backend
+  const [manualModal, setManualModal] = useState(null)   // {mode:'new'} | {mode:'edit', order} | null
   const PAGE_SIZE = 30
 
   const load = useCallback(async () => {
@@ -112,6 +114,17 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
     } finally { setSendingApproval(null) }
   }
 
+  async function deleteManualOrder(order) {
+    if (!confirm(`Delete this manually-entered order for "${order.companyName}"? Any designs already made stay in the library.`)) return
+    try {
+      const res = await apiFetch(`/api/orders/manual/${order.rowSlug}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error(await res.text())
+      load()
+    } catch (err) {
+      setError(`Delete failed: ${err.message || 'network error'}`)
+    }
+  }
+
   const pendingCount = orders.filter(o => o.status === 'pending').length
 
   return (
@@ -127,16 +140,30 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
               </span>
             )}
           </h1>
-          <p className="text-sm text-gray-400 mt-0.5">From Formaloo — {total} total submissions</p>
+          <p className="text-sm text-gray-400 mt-0.5">From Formaloo (+ manual entries) — {total} total</p>
         </div>
-        <button onClick={load} className="btn-ghost text-sm" disabled={loading}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-            className={loading ? 'animate-spin' : ''}>
-            <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-          </svg>
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setManualModal({ mode: 'new' })} className="btn-secondary text-sm">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New order
+          </button>
+          <button onClick={load} className="btn-ghost text-sm" disabled={loading}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+              className={loading ? 'animate-spin' : ''}>
+              <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {manualModal && (
+        <ManualOrderModal
+          initial={manualModal.mode === 'edit' ? manualModal.order : null}
+          onClose={() => setManualModal(null)}
+          onSaved={() => { setManualModal(null); load() }}
+        />
+      )}
 
       {/* Search */}
       <div className="relative mb-4">
@@ -208,6 +235,8 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
                 isUpdating={updating === order.rowSlug}
                 onSendApproval={() => sendApproval(order)}
                 isSendingApproval={sendingApproval === order.rowSlug}
+                onEditManual={() => setManualModal({ mode: 'edit', order })}
+                onDeleteManual={() => deleteManualOrder(order)}
               />
             ))}
           </div>
@@ -248,10 +277,11 @@ function ApprovalChip({ approval }) {
   return <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full shrink-0 ${cls}`} title={title}>{text}</span>
 }
 
-function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdating, onSendApproval, isSendingApproval }) {
+function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdating, onSendApproval, isSendingApproval, onEditManual, onDeleteManual }) {
   const [expanded, setExpanded] = useState(false)
   const status = STATUS_LABELS[order.status] ?? STATUS_LABELS.pending
   const canDesign = order.orderedStand || order.orderedCard
+  const isManual = order.source === 'manual'
 
   return (
     <div className={`card p-4 space-y-3 ${order.status === 'done' ? 'border-brand-100' : ''}`}>
@@ -262,15 +292,28 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
             className="w-9 h-9 object-contain rounded-lg border border-gray-100 bg-white shrink-0" />
         )}
         <div className="min-w-0 flex-1">
-          <p className="font-semibold text-gray-900 truncate">{order.companyName || '(no name)'}</p>
+          <p className="font-semibold text-gray-900 truncate">
+            {order.companyName || '(no name)'}
+            {isManual && <span className="ml-1.5 text-xs font-medium px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 align-middle">Manual</span>}
+          </p>
           <p className="text-xs text-gray-400 mt-0.5">
-            #{order.orderNumber}
+            {order.orderNumber ? <>#{order.orderNumber}</> : (isManual ? 'no order #' : null)}
             {order.submittedAt && <> · {new Date(order.submittedAt).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })}</>}
             {(order.orderedStand || order.orderedCard) && (
               <> · ordered {[order.orderedStand && 'Stand', order.orderedCard && 'Card'].filter(Boolean).join(' + ')}</>
             )}
           </p>
         </div>
+        {isManual && (
+          <div className="flex items-center gap-1 shrink-0">
+            <button onClick={onEditManual} title="Edit this order" className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-300 hover:text-gray-600 hover:bg-gray-100">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button onClick={onDeleteManual} title="Delete this order" className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-300 hover:text-red-400 hover:bg-red-50">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg>
+            </button>
+          </div>
+        )}
         <div className="shrink-0">
           <StatusDropdown current={order.status} onChange={onStatusChange} loading={isUpdating} />
         </div>
@@ -287,6 +330,11 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
                 <ApprovalChip approval={d.approval} />
                 {d.created_by_name && <span className="text-xs text-gray-400 shrink-0" title={`Created by ${d.created_by_name}`}>by {d.created_by_name}</span>}
                 <span className="text-xs text-gray-400 shrink-0">{d.product_id === 'stand' ? 'Stand' : 'Card'}</span>
+                {d.approval?.token && !d.approval.superseded && (
+                  <a href={`${window.location.origin}/approve/${d.approval.token}`} target="_blank" rel="noopener noreferrer"
+                    title="Open the exact link the client received"
+                    className="shrink-0 text-xs font-medium text-gray-500 hover:text-gray-700">View</a>
+                )}
                 <button onClick={() => onOpenDesign({ ...d, ownerName: order.companyName, logoUrl: order.logoUrl, googleReviewUrl: order.googleReviewUrl })}
                   className="shrink-0 text-xs font-medium text-brand-600 hover:text-brand-700">Edit</button>
               </div>

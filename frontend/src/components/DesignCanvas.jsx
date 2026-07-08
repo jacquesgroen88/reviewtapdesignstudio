@@ -10,10 +10,13 @@ import { generateStyledQR, QR_BASE_URL } from '../lib/qr.js'
 import { apiFetch } from '../lib/api.js'
 import { useHistory } from '../hooks/useHistory.js'
 import { createApprovalRequest } from '../lib/approvals.js'
+import { removeBg, cropToDataUrl } from '../lib/logoPipeline.js'
 import LogoPanel     from './LogoPanel.jsx'
 import CanvasToolbar from './CanvasToolbar.jsx'
 import Menu          from './Menu.jsx'
-import ApprovalShareModal from './ApprovalShareModal.jsx'
+import ApprovalShareModal  from './ApprovalShareModal.jsx'
+import CropModal           from './CropModal.jsx'
+import CanvasContextMenu   from './CanvasContextMenu.jsx'
 
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 4.0
@@ -41,6 +44,9 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   const [currentDesignId, setCurrentDesignId] = useState(prefill?.designId || null)
   const [showVariants, setShowVariants] = useState(false)
   const [approvalResult, setApprovalResult] = useState(null)   // {url, waUrl, ...} after send
+  const [contextMenu, setContextMenu] = useState(null)   // {x, y, objId, isQR} — canvas right-click
+  const [cropTarget,  setCropTarget]  = useState(null)   // logo id being cropped, or null
+  const [previewImages, setPreviewImages] = useState(null)   // client-view mockup images, or null
   // New designs auto-name as "{order#} - {Type} - {Company}", e.g. "1703 - Stand - ABC Company".
   // Order # comes from the linked order; Type from the product; Company is the editable part —
   // for multi-unit/multi-company orders, just rename the company in the field below. Falls back
@@ -77,6 +83,12 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       width: W, height: H,
       backgroundColor: '#eef0f3',
       preserveObjectStacking: true, selection: true,
+      // Without these, Fabric swallows right/middle-clicks before any
+      // 'mouse:down' listener ever sees them (checkClick() + an early
+      // return) — required for the context menu AND for the existing
+      // middle-mouse pan (which was silently unreachable without this).
+      fireRightClick: true,
+      fireMiddleClick: true,
     })
     fabricRef.current = canvas
 
@@ -106,10 +118,18 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
         const restored = []
         saved.assets.forEach(a => {
           fabric.Image.fromURL(a.src, img => {
-            img.set({ left: a.left, top: a.top, scaleX: a.scaleX, scaleY: a.scaleY, angle: a.angle || 0, id: a.id, isQR: !!a.isQR, ...HANDLE_STYLE })
+            img.set({
+              left: a.left, top: a.top, scaleX: a.scaleX, scaleY: a.scaleY, angle: a.angle || 0, id: a.id, isQR: !!a.isQR, ...HANDLE_STYLE,
+              originalSrc: a.originalSrc || a.src, crop: a.crop || null, bgRemoved: !!a.bgRemoved,
+            })
             img.on('moving', () => onAssetMove(img))
             canvas.add(img)
-            restored.push({ id: a.id, name: a.isQR ? 'QR Code' : 'Logo', originalSrc: a.src, processedSrc: a.src, bgRemoved: false, isQR: !!a.isQR })
+            // bgRemovedFullSrc resets on reload (session-only cache) — re-toggling
+            // bg removal or re-opening crop recomputes it once, on demand.
+            restored.push({
+              id: a.id, name: a.isQR ? 'QR Code' : 'Logo', originalSrc: a.originalSrc || a.src, processedSrc: a.src,
+              bgRemoved: !!a.bgRemoved, bgRemovedFullSrc: null, crop: a.crop || null, isQR: !!a.isQR,
+            })
             if (++done === saved.assets.length) { setLogos(restored); canvas.renderAll(); setReady(true); snapshot() }
           }, { crossOrigin: 'anonymous' })
         })
@@ -139,6 +159,24 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       e.preventDefault(); e.stopPropagation()
       const cur = zoomRef.current
       applyZoom(cur * (e.deltaY > 0 ? 0.9 : 1.1))
+    })
+
+    // Right-click on an asset → context menu (Crop/BG-removal/layer/delete).
+    // Browser's default menu is only suppressed when we're showing our own
+    // (spec: "no menu on empty canvas/background" — default stays available there).
+    canvas.on('mouse:down', opt => {
+      const e = opt.e
+      if (e.button === 2) {
+        if (opt.target && !opt.target.isBackground && !opt.target.isGuide) {
+          e.preventDefault()
+          canvas.setActiveObject(opt.target)
+          canvas.renderAll()
+          setContextMenu({ x: e.clientX, y: e.clientY, objId: opt.target.id, isQR: !!opt.target.isQR })
+        } else {
+          setContextMenu(null)
+        }
+        return
+      }
     })
 
     // Space-drag (or middle-mouse) = scroll the workspace
@@ -221,6 +259,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
         left: (f0.x + f0.face.width / 2) * DISPLAY_SCALE - (img.width * scale) / 2,
         top:  (f0.face.height / 2) * DISPLAY_SCALE - (img.height * scale) / 2,
         scaleX: scale, scaleY: scale, id: entry.id, isQR: !!entry.isQR, ...HANDLE_STYLE,
+        originalSrc: entry.originalSrc || null, crop: entry.crop || null, bgRemoved: !!entry.bgRemoved,
       })
       img.on('moving', () => onAssetMove(img))
       canvas.add(img); canvas.setActiveObject(img); canvas.renderAll()
@@ -233,7 +272,10 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     const existing = canvas.getObjects().find(o => o.id === entry.id)
     if (existing) {
       fabric.Image.fromURL(entry.processedSrc || entry.originalSrc, img => {
-        img.set({ scaleX: existing.scaleX, scaleY: existing.scaleY, left: existing.left, top: existing.top, angle: existing.angle, id: entry.id, isQR: !!entry.isQR, ...HANDLE_STYLE })
+        img.set({
+          scaleX: existing.scaleX, scaleY: existing.scaleY, left: existing.left, top: existing.top, angle: existing.angle, id: entry.id, isQR: !!entry.isQR, ...HANDLE_STYLE,
+          originalSrc: entry.originalSrc || null, crop: entry.crop || null, bgRemoved: !!entry.bgRemoved,
+        })
         canvas.remove(existing); img.on('moving', () => onAssetMove(img)); canvas.add(img); canvas.setActiveObject(img); canvas.renderAll()
       }, { crossOrigin: 'anonymous' })
     } else { addToCanvas(entry) }
@@ -242,6 +284,41 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     const canvas = fabricRef.current; if (!canvas) return
     const o = canvas.getObjects().find(x => x.id === id)
     if (o) { canvas.remove(o); canvas.renderAll() }
+  }
+
+  // ── Crop + background removal pipeline (shared by LogoPanel buttons AND the
+  // canvas right-click menu — one place owns the logic, both UIs call it).
+  // Pipeline: originalSrc -> bgRemoved? -> crop -> processedSrc. Composing from
+  // the cached UNCROPPED bg-removed image means toggling either step never
+  // discards the other (spec Feature D).
+  async function handleToggleBgRemoval(logoId, currentValue) {
+    const logo = logos.find(l => l.id === logoId)
+    if (!logo) return
+    let updated
+    if (!currentValue) {
+      const bgRemovedFullSrc = logo.bgRemovedFullSrc || await removeBg(logo.originalSrc)
+      const processedSrc = logo.crop ? await cropToDataUrl(bgRemovedFullSrc, logo.crop) : bgRemovedFullSrc
+      updated = { ...logo, bgRemoved: true, bgRemovedFullSrc, processedSrc }
+    } else {
+      const processedSrc = logo.crop ? await cropToDataUrl(logo.originalSrc, logo.crop) : logo.originalSrc
+      updated = { ...logo, bgRemoved: false, processedSrc }
+    }
+    setLogos(prev => prev.map(l => l.id === logoId ? updated : l))
+    handleLogoReady(updated)
+  }
+
+  // The crop modal always crops from the UNCROPPED base (bg-removed version if
+  // that step is active) so re-cropping can expand back out, never compounds.
+  function cropBaseFor(logo) {
+    return logo.bgRemoved ? (logo.bgRemovedFullSrc || logo.processedSrc) : logo.originalSrc
+  }
+  async function applyCrop(dataUrl, cropRect) {
+    const logo = logos.find(l => l.id === cropTarget)
+    if (!logo) { setCropTarget(null); return }
+    const updated = { ...logo, processedSrc: dataUrl, crop: cropRect }
+    setLogos(prev => prev.map(l => l.id === logo.id ? updated : l))
+    handleLogoReady(updated)
+    setCropTarget(null)
   }
 
   function bringForward() { const o = fabricRef.current?.getActiveObject(); if (o) { fabricRef.current.bringForward(o); fabricRef.current.renderAll(); snapshot() } }
@@ -371,7 +448,10 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   function serializeAssets() {
     return fabricRef.current.getObjects()
       .filter(o => o.type === 'image' && !o.isBackground && !o.isGuide)
-      .map(o => ({ id: o.id, isQR: !!o.isQR, src: o.getSrc ? o.getSrc() : '', left: o.left, top: o.top, scaleX: o.scaleX, scaleY: o.scaleY, angle: o.angle || 0 }))
+      .map(o => ({
+        id: o.id, isQR: !!o.isQR, src: o.getSrc ? o.getSrc() : '', left: o.left, top: o.top, scaleX: o.scaleX, scaleY: o.scaleY, angle: o.angle || 0,
+        originalSrc: o.originalSrc || null, crop: o.crop || null, bgRemoved: !!o.bgRemoved,
+      }))
   }
   // Create a brand-new design row, or update the one we're editing.
   // The name comes from the inline name field (no native prompts).
@@ -450,6 +530,23 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     } finally { setExporting(false) }
   }
 
+  // "See what the client sees" — reuses the exact mockup render the approval
+  // page and PDF/JPEG exports use (exactFaceCanvas with mockupTemplate), so
+  // there's one source of truth for what a client is ever shown.
+  async function handlePreview() {
+    setExporting(true)
+    try {
+      const images = []
+      for (const e of layout) {
+        const cv = await exactFaceCanvas(e, e.face.mockupTemplate || e.face.template)
+        images.push({ label: layout.length > 1 ? e.face.label : variant.label, dataUrl: cv.toDataURL('image/png') })
+      }
+      setPreviewImages(images)
+    } catch (err) {
+      showMsg('error', `Preview failed: ${err.message}`)
+    } finally { setExporting(false) }
+  }
+
   async function handleMarkComplete() {
     setExporting(true)
     try { await persistDesign(); await setStatus('done'); showMsg('success', 'Saved & marked complete'); setTimeout(() => onOrderComplete?.(), 700) }
@@ -518,6 +615,8 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
           onLogosChange={setLogos}
           onLogoReady={handleLogoReady}
           onLogoRemove={handleLogoRemove}
+          onToggleBgRemoval={handleToggleBgRemoval}
+          onCropLogo={setCropTarget}
           variantId={variantId}
           prefillGoogleUrl={prefill?.googleReviewUrl}
           prefillLabel={prefill?.companyName}
@@ -613,6 +712,10 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
               ]}
             />
 
+            <button className="btn-secondary" title="See exactly what the client will see (mockup view, not the print file)" disabled={!hasAssets || exporting} onClick={handlePreview}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              Preview
+            </button>
             <button className="btn-secondary" title="Save and send the client an approval link (opens WhatsApp share)" disabled={!hasAssets || exporting} onClick={handleSendApproval}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
               Approval
@@ -637,6 +740,78 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       {approvalResult && (
         <ApprovalShareModal result={approvalResult} clientName={prefill?.companyName || jobName} onClose={() => setApprovalResult(null)} />
       )}
+      {previewImages && (
+        <PreviewModal images={previewImages} onClose={() => setPreviewImages(null)} />
+      )}
+      {cropTarget && (() => {
+        const logo = logos.find(l => l.id === cropTarget)
+        if (!logo) return null
+        return (
+          <CropModal
+            src={cropBaseFor(logo)}
+            initialCrop={logo.crop}
+            onApply={applyCrop}
+            onClose={() => setCropTarget(null)}
+          />
+        )
+      })()}
+      {contextMenu && (
+        <CanvasContextMenu
+          x={contextMenu.x} y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+          items={contextMenu.isQR ? [
+            { label: 'Bring forward', onClick: bringForward,
+              icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="1"/><rect x="3" y="3" width="12" height="12" rx="1" fill="white" stroke="currentColor"/></svg> },
+            { label: 'Send backward', onClick: sendBackward,
+              icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="1"/><rect x="3" y="3" width="12" height="12" rx="1" fill="white" stroke="currentColor"/></svg> },
+            { divider: true },
+            { label: 'Delete', onClick: deleteSelected, danger: true,
+              icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg> },
+          ] : [
+            { label: 'Crop…', onClick: () => setCropTarget(contextMenu.objId),
+              icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg> },
+            { label: logos.find(l => l.id === contextMenu.objId)?.bgRemoved ? 'Restore background' : 'Remove background',
+              onClick: () => handleToggleBgRemoval(contextMenu.objId, !!logos.find(l => l.id === contextMenu.objId)?.bgRemoved),
+              icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg> },
+            { divider: true },
+            { label: 'Bring forward', onClick: bringForward,
+              icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="1"/><rect x="3" y="3" width="12" height="12" rx="1" fill="white" stroke="currentColor"/></svg> },
+            { label: 'Send backward', onClick: sendBackward,
+              icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="1"/><rect x="3" y="3" width="12" height="12" rx="1" fill="white" stroke="currentColor"/></svg> },
+            { divider: true },
+            { label: 'Delete', onClick: deleteSelected, danger: true,
+              icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg> },
+          ]}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Client-view preview modal ──────────────────────────────────────────────────
+
+function PreviewModal({ images, onClose }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="card w-full max-w-lg p-5 space-y-4 max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">What the client sees</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Mockup view — not the print file</p>
+          </div>
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-300 hover:text-gray-600 hover:bg-gray-100">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div className="space-y-3">
+          {images.map((img, i) => (
+            <div key={i}>
+              {images.length > 1 && <p className="text-xs font-medium text-gray-500 mb-1">{img.label}</p>}
+              <img src={img.dataUrl} alt={img.label} className="w-full rounded-xl border border-gray-100" />
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }

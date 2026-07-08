@@ -1,10 +1,14 @@
 import { useCallback, useState, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
+import { readFileAsDataURL } from '../lib/logoPipeline.js'
 import QRPanel from './QRPanel.jsx'
 
 let logoIdCounter = 0
 
-export default function LogoPanel({ logos, onLogosChange, onLogoReady, onLogoRemove, variantId, prefillGoogleUrl, prefillLabel }) {
+// onToggleBgRemoval / onCropLogo are owned by the parent (DesignCanvas) so the
+// same pipeline logic is shared with the canvas's right-click menu — this
+// panel only owns the loading-spinner UI, not the image processing itself.
+export default function LogoPanel({ logos, onLogosChange, onLogoReady, onLogoRemove, onToggleBgRemoval, onCropLogo, variantId, prefillGoogleUrl, prefillLabel }) {
   const [processingIds, setProcessingIds] = useState(new Set())
 
   // Warm up the background-removal model in the background on mount so the
@@ -34,26 +38,14 @@ export default function LogoPanel({ logos, onLogosChange, onLogoReady, onLogoRem
   })
 
   async function toggleBgRemoval(logoId, currentValue) {
-    const logo = logos.find(l => l.id === logoId)
-    if (!logo) return
-
-    if (!currentValue) {
-      setProcessingIds(prev => new Set([...prev, logoId]))
-      try {
-        const processedSrc = await removeBg(logo.originalSrc)
-        const updated = { ...logo, bgRemoved: true, processedSrc }
-        onLogosChange(prev => prev.map(l => l.id === logoId ? updated : l))
-        onLogoReady(updated)
-      } catch (err) {
-        console.error('BG removal failed:', err)
-        alert(`Background removal failed: ${err?.message || err}. The model downloads on first use — if this is the first try, give it a moment and try again.`)
-      } finally {
-        setProcessingIds(prev => { const s = new Set(prev); s.delete(logoId); return s })
-      }
-    } else {
-      const updated = { ...logo, bgRemoved: false, processedSrc: logo.originalSrc }
-      onLogosChange(prev => prev.map(l => l.id === logoId ? updated : l))
-      onLogoReady(updated)
+    setProcessingIds(prev => new Set([...prev, logoId]))
+    try {
+      await onToggleBgRemoval(logoId, currentValue)
+    } catch (err) {
+      console.error('BG removal failed:', err)
+      alert(`Background removal failed: ${err?.message || err}. The model downloads on first use — if this is the first try, give it a moment and try again.`)
+    } finally {
+      setProcessingIds(prev => { const s = new Set(prev); s.delete(logoId); return s })
     }
   }
 
@@ -148,6 +140,18 @@ export default function LogoPanel({ logos, onLogosChange, onLogoReady, onLogoRem
                     </label>
                   )}
                 </div>
+
+                {/* Crop */}
+                <div className="flex items-center justify-between pt-2 border-t border-gray-50">
+                  <div>
+                    <p className="text-xs font-medium text-gray-700">Crop</p>
+                    <p className="text-xs text-gray-400">{logo.crop ? 'Cropped — click to adjust' : 'Trim whitespace or cut to the mark'}</p>
+                  </div>
+                  <button onClick={() => onCropLogo(logo.id)}
+                    className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors">
+                    {logo.crop ? 'Edit crop' : 'Crop…'}
+                  </button>
+                </div>
               </div>
             )
           })}
@@ -190,26 +194,3 @@ export default function LogoPanel({ logos, onLogosChange, onLogoReady, onLogoRem
   )
 }
 
-function readFileAsDataURL(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload  = e => resolve(e.target.result)
-    reader.onerror = reject
-    reader.readAsDataURL(file)
-  })
-}
-
-async function removeBg(imageSrc) {
-  // Lazy-load the heavy WASM model only when first needed
-  const { removeBackground } = await import('@imgly/background-removal')
-  // Fetch the source to a Blob first. This reliably handles data URLs,
-  // object URLs, and our same-origin proxied logo URLs (passing a raw
-  // string URL can fail to resolve inside the worker).
-  const resp = await fetch(imageSrc)
-  if (!resp.ok) throw new Error(`could not load image (${resp.status})`)
-  const inputBlob = await resp.blob()
-  const outBlob = await removeBackground(inputBlob)
-  // Return a DATA URL (not a blob: object URL) so it persists when the design
-  // is saved and reopened in a later session.
-  return readFileAsDataURL(outBlob)
-}
