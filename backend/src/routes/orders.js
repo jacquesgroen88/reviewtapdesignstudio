@@ -1,6 +1,7 @@
 import express from 'express'
 import { fetchOrders, fetchOrder } from '../services/formaloo.js'
 import { getOrderStatus, setOrderStatus, getAllOrderStatuses, listDesignsByOwner, getProfileNames } from '../services/database.js'
+import { approvalSummaryByDesign } from '../services/approvals.js'
 
 const router = express.Router()
 
@@ -17,8 +18,9 @@ router.get('/', async (req, res) => {
     const fetchPageSize = search ? 300 : pageSize
     const { orders, count } = await fetchOrders({ page: fetchPage, pageSize: fetchPageSize, onlyDesignNeeded })
 
-    const [statuses, designsMap, names] = await Promise.all([
+    const [statuses, designsMap, names, approvalMap] = await Promise.all([
       getAllOrderStatuses(), listDesignsByOwner(), getProfileNames(),
+      approvalSummaryByDesign().catch(() => ({})),
     ])
     const statusMap = Object.fromEntries(statuses.map(s => [s.row_slug, s]))
 
@@ -26,7 +28,11 @@ router.get('/', async (req, res) => {
       ...order,
       status: statusMap[order.rowSlug]?.status ?? (order.orderedStand || order.orderedCard ? 'pending' : 'not_needed'),
       note:   statusMap[order.rowSlug]?.note   ?? null,
-      designs: (designsMap[order.rowSlug] ?? []).map(d => ({ ...d, created_by_name: d.created_by ? names[d.created_by] || null : null })),
+      designs: (designsMap[order.rowSlug] ?? []).map(d => ({
+        ...d,
+        created_by_name: d.created_by ? names[d.created_by] || null : null,
+        approval: approvalMap[d.id] || null,
+      })),
       hasDesign: !!designsMap[order.rowSlug]?.length,
     }))
 

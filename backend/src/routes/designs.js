@@ -1,6 +1,7 @@
 import express from 'express'
 import { nanoid } from 'nanoid'
-import { listDesigns, getDesign, createDesign, updateDesign, deleteDesign, getAllOrderStatuses, getProfileNames } from '../services/database.js'
+import { listDesigns, getDesign, createDesign, updateDesign, deleteDesign, getAllOrderStatuses, getProfileNames, setOrderStatus } from '../services/database.js'
+import { supersedeForDesigns } from '../services/approvals.js'
 
 const router = express.Router()
 
@@ -48,12 +49,20 @@ router.post('/', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
 
-// Update (rename / replace canvas / change variant) — stamps last editor
+// Update (rename / replace canvas / change variant) — stamps last editor.
+// Version lock (Feature F): changing the ARTWORK invalidates open approval
+// links for this design, and the order goes back to needing approval —
+// nothing ever prints against a stale client "yes".
 router.put('/:id', async (req, res) => {
   try {
     const d = await getDesign(req.params.id)
     if (!d) return res.status(404).json({ error: 'Not found' })
-    res.json(await updateDesign(req.params.id, { ...req.body, updatedBy: req.user?.id }))
+    const updated = await updateDesign(req.params.id, { ...req.body, updatedBy: req.user?.id })
+    if (req.body.design !== undefined) {
+      supersedeForDesigns([req.params.id]).catch(err => console.error('supersede failed:', err.message))
+      if (d.owner_slug) setOrderStatus(d.owner_slug, 'pending_approval', 'Design updated — needs (re)approval').catch(() => {})
+    }
+    res.json(updated)
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
 

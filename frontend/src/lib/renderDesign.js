@@ -26,7 +26,13 @@ function loadFabricImage(src) {
 
 // Render a full design row ({product_id, variant_id, design:{assets}}) and
 // return one exact-size canvas per face: [{ faceId, faceLabel, variantLabel, canvas }]
-export async function renderDesignFaces(designRow) {
+//
+// mode (spec §6b rule — NEVER FORGET):
+//   'print'  (default) → face.template — the print-production background.
+//   'mockup'           → face.mockupTemplate || face.template — what the
+//                        product actually looks like; ONLY thing a client
+//                        may ever see (approval pages, previews).
+export async function renderDesignFaces(designRow, { mode = 'print' } = {}) {
   const product = getProduct(designRow.product_id)
   if (!product) throw new Error(`Unknown product "${designRow.product_id}"`)
   const variant = product.templateVariants.find(v => v.id === designRow.variant_id) || product.templateVariants[0]
@@ -45,7 +51,8 @@ export async function renderDesignFaces(designRow) {
   try {
     // Backgrounds first (same scaling as the editor init)
     for (const { face, x } of layout) {
-      const img = await loadFabricImage(face.template)
+      const bgSrc = mode === 'mockup' ? (face.mockupTemplate || face.template) : face.template
+      const img = await loadFabricImage(bgSrc)
       img.scaleToWidth(face.width * DISPLAY_SCALE)
       img.set({ left: x * DISPLAY_SCALE, top: 0 })
       canvas.add(img)
@@ -80,4 +87,15 @@ export function canvasToTiffBlob(cv) {
   const id = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height)
   const buf = UTIF.encodeImage(id.data.buffer, cv.width, cv.height, { t282: [300], t283: [300], t296: [2] })
   return new Blob([buf], { type: 'image/tiff' })
+}
+
+// Web-friendly downscale (approval mockups): PNG dataURL, longest edge maxDim
+export function canvasToDataURL(cv, maxDim = 1000) {
+  const scale = Math.min(1, maxDim / Math.max(cv.width, cv.height))
+  if (scale >= 1) return cv.toDataURL('image/png')
+  const out = document.createElement('canvas')
+  out.width = Math.round(cv.width * scale)
+  out.height = Math.round(cv.height * scale)
+  out.getContext('2d').drawImage(cv, 0, 0, out.width, out.height)
+  return out.toDataURL('image/png')
 }

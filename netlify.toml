@@ -34,6 +34,13 @@
   status = 200
   force  = true
 
+# Client approval page → dedicated function (public, server-rendered)
+[[redirects]]
+  from   = "/approve/*"
+  to     = "/.netlify/functions/approve"
+  status = 200
+  force  = true
+
 # SPA fallback
 [[redirects]]
   from   = "/*"

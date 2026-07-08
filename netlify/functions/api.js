@@ -7,6 +7,7 @@ import ordersRouter   from '../../backend/src/routes/orders.js'
 import jobsRouter     from '../../backend/src/routes/jobs.js'
 import designsRouter  from '../../backend/src/routes/designs.js'
 import teamRouter     from '../../backend/src/routes/team.js'
+import approvalsRouter from '../../backend/src/routes/approvals.js'
 import { requireAuth } from '../../backend/src/middleware/auth.js'
 
 const app = express()
@@ -31,5 +32,6 @@ app.use('/api/orders',  ordersRouter)
 app.use('/api/jobs',    jobsRouter)
 app.use('/api/designs', designsRouter)
 app.use('/api/team',    teamRouter)
+app.use('/api/approvals', approvalsRouter)
 
 export const handler = serverless(app)

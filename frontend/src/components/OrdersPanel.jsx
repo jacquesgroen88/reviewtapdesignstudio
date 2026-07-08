@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import Menu from './Menu.jsx'
 import { apiFetch } from '../lib/api.js'
+import { createApprovalRequest } from '../lib/approvals.js'
+import ApprovalShareModal from './ApprovalShareModal.jsx'
 
 const STATUS_LABELS = {
   pending:          { label: 'Pending',          color: 'bg-amber-100 text-amber-700' },
@@ -35,6 +37,8 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
   const [page,     setPage]     = useState(1)
   const [total,    setTotal]    = useState(0)
   const [updating, setUpdating] = useState(null)   // rowSlug being status-updated
+  const [sendingApproval, setSendingApproval] = useState(null)   // rowSlug being rendered/sent
+  const [approvalResult,  setApprovalResult]  = useState(null)   // {result, clientName} → share modal
   const [search,      setSearch]      = useState('')   // input value
   const [searchTerm,  setSearchTerm]  = useState('')   // debounced, sent to backend
   const PAGE_SIZE = 30
@@ -79,6 +83,31 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
       // Status stays unchanged in the UI — never show a state the backend didn't accept
       setError(`Could not update the order status: ${err.message || 'network error'}`)
     } finally { setUpdating(null) }
+  }
+
+  // One approval link covering every design on the order (stand + card together)
+  async function sendApproval(order) {
+    setSendingApproval(order.rowSlug)
+    setError(null)
+    try {
+      const designs = []
+      for (const meta of order.designs) {
+        const res = await apiFetch(`/api/designs/${meta.id}`)
+        if (!res.ok) throw new Error(`could not load design "${meta.name}"`)
+        designs.push(await res.json())
+      }
+      const result = await createApprovalRequest({
+        designs,
+        ownerSlug: order.rowSlug,
+        clientName: order.companyName,
+        whatsapp: order.whatsapp,
+        orderNumber: order.orderNumber,
+      })
+      setApprovalResult({ result, clientName: order.companyName })
+      setOrders(prev => prev.map(o => o.rowSlug === order.rowSlug ? { ...o, status: 'pending_approval' } : o))
+    } catch (err) {
+      setError(`Approval link failed: ${err.message || 'unknown error'}`)
+    } finally { setSendingApproval(null) }
   }
 
   const pendingCount = orders.filter(o => o.status === 'pending').length
@@ -175,9 +204,19 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
                 onOpenDesign={onOpenDesign}
                 onStatusChange={s => updateStatus(order.rowSlug, s)}
                 isUpdating={updating === order.rowSlug}
+                onSendApproval={() => sendApproval(order)}
+                isSendingApproval={sendingApproval === order.rowSlug}
               />
             ))}
           </div>
+
+          {approvalResult && (
+            <ApprovalShareModal
+              result={approvalResult.result}
+              clientName={approvalResult.clientName}
+              onClose={() => { setApprovalResult(null); load() }}
+            />
+          )}
 
           {/* Pagination */}
           {!searchTerm && total > PAGE_SIZE && (
@@ -193,7 +232,21 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
   )
 }
 
-function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdating }) {
+// Chip describing where a design's latest approval link stands
+function ApprovalChip({ approval }) {
+  if (!approval) return null
+  const days = Math.floor((Date.now() - new Date(approval.sent_at)) / 86400000)
+  const ago = days === 0 ? 'today' : `${days}d ago`
+  let cls, text, title
+  if (approval.superseded)                { cls = 'bg-gray-100 text-gray-500';   text = 'link outdated';            title = 'The design changed after this link was sent' }
+  else if (approval.response === 'approved') { cls = 'bg-brand-100 text-brand-700'; text = '✓ approved';             title = `Client approved ${approval.responded_at ? new Date(approval.responded_at).toLocaleDateString('en-ZA') : ''}` }
+  else if (approval.response === 'changes')  { cls = 'bg-orange-100 text-orange-700'; text = 'changes requested';   title = approval.comment || 'Client requested changes' }
+  else if (approval.viewed_at)            { cls = 'bg-blue-100 text-blue-700';   text = `seen · sent ${ago}`;       title = 'Client opened the link but has not answered yet' }
+  else                                    { cls = 'bg-amber-100 text-amber-700'; text = `sent ${ago}`;              title = 'Client has not opened the link yet' }
+  return <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full shrink-0 ${cls}`} title={title}>{text}</span>
+}
+
+function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdating, onSendApproval, isSendingApproval }) {
   const [expanded, setExpanded] = useState(false)
   const status = STATUS_LABELS[order.status] ?? STATUS_LABELS.pending
   const canDesign = order.orderedStand || order.orderedCard
@@ -226,6 +279,7 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
             <div key={d.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-gray-50">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-brand-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
               <span className="flex-1 min-w-0 text-xs font-medium text-gray-700 truncate">{d.name}</span>
+              <ApprovalChip approval={d.approval} />
               {d.created_by_name && <span className="text-xs text-gray-400 shrink-0" title={`Created by ${d.created_by_name}`}>by {d.created_by_name}</span>}
               <span className="text-xs text-gray-400 shrink-0">{d.product_id === 'stand' ? 'Stand' : 'Card'}</span>
               <button onClick={() => onOpenDesign({ ...d, ownerName: order.companyName, logoUrl: order.logoUrl, googleReviewUrl: order.googleReviewUrl })}
@@ -243,6 +297,12 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
             </svg>
             New design
+          </button>
+        )}
+        {order.designs?.length > 0 && (
+          <button className="btn-secondary flex-1 text-sm py-2" onClick={onSendApproval} disabled={isSendingApproval}
+            title="Create one approval link covering every design on this order">
+            {isSendingApproval ? 'Rendering…' : 'Send for approval'}
           </button>
         )}
         <StatusDropdown current={order.status} onChange={onStatusChange} loading={isUpdating} />

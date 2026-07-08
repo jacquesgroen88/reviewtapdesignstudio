@@ -9,9 +9,11 @@ import { DISPLAY_SCALE } from '../lib/products.js'
 import { generateStyledQR, QR_BASE_URL } from '../lib/qr.js'
 import { apiFetch } from '../lib/api.js'
 import { useHistory } from '../hooks/useHistory.js'
+import { createApprovalRequest } from '../lib/approvals.js'
 import LogoPanel     from './LogoPanel.jsx'
 import CanvasToolbar from './CanvasToolbar.jsx'
 import Menu          from './Menu.jsx'
+import ApprovalShareModal from './ApprovalShareModal.jsx'
 
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 4.0
@@ -38,6 +40,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   const [exportMsg,   setExportMsg]   = useState(null)
   const [currentDesignId, setCurrentDesignId] = useState(prefill?.designId || null)
   const [showVariants, setShowVariants] = useState(false)
+  const [approvalResult, setApprovalResult] = useState(null)   // {url, waUrl, ...} after send
   // New designs auto-name as "{order#} - {Type} - {Company}", e.g. "1703 - Stand - ABC Company".
   // Order # comes from the linked order; Type from the product; Company is the editable part —
   // for multi-unit/multi-company orders, just rename the company in the field below. Falls back
@@ -424,6 +427,29 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     catch (err) { showMsg('error', `Save failed: ${err.message}`) }
     finally { setExporting(false) }
   }
+  // Save, render mockup-mode images (client view — never the print
+  // background), create the approval link, open the share modal.
+  async function handleSendApproval() {
+    setExporting(true)
+    try {
+      const id = await persistDesign()
+      const result = await createApprovalRequest({
+        designs: [{
+          id,
+          product_id: product.id,
+          variant_id: variantId,
+          design: { assets: serializeAssets() },
+        }],
+        ownerSlug: prefill?.rowSlug || null,
+        clientName: prefill?.companyName || jobName || null,
+        orderNumber: prefill?.orderNumber || null,
+      })
+      setApprovalResult(result)
+    } catch (err) {
+      showMsg('error', `Approval link failed: ${err.message}`)
+    } finally { setExporting(false) }
+  }
+
   async function handleMarkComplete() {
     setExporting(true)
     try { await persistDesign(); await setStatus('done'); showMsg('success', 'Saved & marked complete'); setTimeout(() => onOrderComplete?.(), 700) }
@@ -587,6 +613,10 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
               ]}
             />
 
+            <button className="btn-secondary" title="Save and send the client an approval link (opens WhatsApp share)" disabled={!hasAssets || exporting} onClick={handleSendApproval}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+              Approval
+            </button>
             <button className="btn-secondary" title="Save this design to your library (Ctrl+S)" disabled={!hasAssets || exporting} onClick={handleSaveDesign}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
               Save
@@ -603,6 +633,9 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
 
       {showVariants && (
         <VariantsModal onClose={() => setShowVariants(false)} onGenerate={handleGenerateVariants} />
+      )}
+      {approvalResult && (
+        <ApprovalShareModal result={approvalResult} clientName={prefill?.companyName || jobName} onClose={() => setApprovalResult(null)} />
       )}
     </div>
   )

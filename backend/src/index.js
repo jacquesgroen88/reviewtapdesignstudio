@@ -8,6 +8,8 @@ import ordersRouter   from './routes/orders.js'
 import jobsRouter     from './routes/jobs.js'
 import designsRouter  from './routes/designs.js'
 import teamRouter     from './routes/team.js'
+import approvalsRouter from './routes/approvals.js'
+import approvePublicRouter from './routes/approvePublic.js'
 import proxyImageRouter from './routes/proxyImage.js'
 import { requireAuth } from './middleware/auth.js'
 
@@ -21,6 +23,7 @@ app.use(express.json({ limit: '50mb' }))
 // (no-header <img>/canvas loads; hardened by domain allowlist instead).
 app.get('/api/health', (_, res) => res.json({ ok: true }))
 app.use('/r',               redirectRouter)   // dynamic QR redirect: /r/:code
+app.use('/approve',         approvePublicRouter)   // client approval page (no login)
 app.use('/api/proxy-image', proxyImageRouter)
 
 // Everything else requires a signed-in team member
@@ -31,5 +34,6 @@ app.use('/api/orders',  ordersRouter)
 app.use('/api/jobs',    jobsRouter)
 app.use('/api/designs', designsRouter)
 app.use('/api/team',    teamRouter)
+app.use('/api/approvals', approvalsRouter)
 
 app.listen(PORT, () => console.log(`ReviewTap backend :${PORT}`))
