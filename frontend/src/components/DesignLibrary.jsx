@@ -10,6 +10,7 @@ const PRODUCT_LABEL = { stand: 'Stand', card: 'Card' }
 // pending_print = the client approved the artwork — it's ready to print.
 const STATUS_CHIP = {
   pending:          { label: 'Pending',           color: 'bg-amber-100 text-amber-700' },
+  ready:            { label: 'Ready',             color: 'bg-teal-100 text-teal-700' },
   pending_approval: { label: 'Awaiting approval', color: 'bg-blue-100 text-blue-700' },
   in_progress:      { label: 'Awaiting approval', color: 'bg-blue-100 text-blue-700' },
   pending_print:    { label: 'Approved',          color: 'bg-purple-100 text-purple-700' },

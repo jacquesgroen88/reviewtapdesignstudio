@@ -68,7 +68,7 @@ router.get('/:rowSlug', async (req, res) => {
 
 router.patch('/:rowSlug/status', async (req, res) => {
   const { status, note } = req.body
-  const valid = ['pending', 'pending_approval', 'pending_print', 'done', 'skipped']
+  const valid = ['pending', 'ready', 'pending_approval', 'pending_print', 'done', 'skipped']
   if (!valid.includes(status)) return res.status(400).json({ error: `status must be one of: ${valid.join(', ')}` })
   await setOrderStatus(req.params.rowSlug, status, note)
   res.json({ ok: true, rowSlug: req.params.rowSlug, status })

@@ -6,6 +6,7 @@ import ApprovalShareModal from './ApprovalShareModal.jsx'
 
 const STATUS_LABELS = {
   pending:          { label: 'Pending',          color: 'bg-amber-100 text-amber-700' },
+  ready:            { label: 'Ready',             color: 'bg-teal-100 text-teal-700' },
   pending_approval: { label: 'Pending Approval',  color: 'bg-blue-100 text-blue-700' },
   pending_print:    { label: 'Pending Print',     color: 'bg-purple-100 text-purple-700' },
   done:             { label: 'Done',              color: 'bg-brand-100 text-brand-700' },
@@ -17,6 +18,7 @@ const STATUS_LABELS = {
 
 const STATUS_OPTIONS = [
   { value: 'pending',          label: 'Pending' },
+  { value: 'ready',            label: 'Ready' },
   { value: 'pending_approval', label: 'Pending Approval' },
   { value: 'pending_print',    label: 'Pending Print' },
   { value: 'done',             label: 'Done' },
@@ -269,21 +271,33 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
             )}
           </p>
         </div>
-        <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${status.color}`}>{status.label}</span>
+        <div className="shrink-0">
+          <StatusDropdown current={order.status} onChange={onStatusChange} loading={isUpdating} />
+        </div>
       </div>
 
       {/* Designs for this order — the actionable focus */}
       {order.designs?.length > 0 && (
         <div className="space-y-1">
           {order.designs.map(d => (
-            <div key={d.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-gray-50">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-brand-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
-              <span className="flex-1 min-w-0 text-xs font-medium text-gray-700 truncate">{d.name}</span>
-              <ApprovalChip approval={d.approval} />
-              {d.created_by_name && <span className="text-xs text-gray-400 shrink-0" title={`Created by ${d.created_by_name}`}>by {d.created_by_name}</span>}
-              <span className="text-xs text-gray-400 shrink-0">{d.product_id === 'stand' ? 'Stand' : 'Card'}</span>
-              <button onClick={() => onOpenDesign({ ...d, ownerName: order.companyName, logoUrl: order.logoUrl, googleReviewUrl: order.googleReviewUrl })}
-                className="shrink-0 text-xs font-medium text-brand-600 hover:text-brand-700">Edit</button>
+            <div key={d.id}>
+              <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-gray-50">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-brand-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
+                <span className="flex-1 min-w-0 text-xs font-medium text-gray-700 truncate">{d.name}</span>
+                <ApprovalChip approval={d.approval} />
+                {d.created_by_name && <span className="text-xs text-gray-400 shrink-0" title={`Created by ${d.created_by_name}`}>by {d.created_by_name}</span>}
+                <span className="text-xs text-gray-400 shrink-0">{d.product_id === 'stand' ? 'Stand' : 'Card'}</span>
+                <button onClick={() => onOpenDesign({ ...d, ownerName: order.companyName, logoUrl: order.logoUrl, googleReviewUrl: order.googleReviewUrl })}
+                  className="shrink-0 text-xs font-medium text-brand-600 hover:text-brand-700">Edit</button>
+              </div>
+              {/* Client's change request, shown inline (not just on hover) */}
+              {d.approval?.response === 'changes' && d.approval?.comment && (
+                <div className="mt-1 ml-4 mr-1 px-3 py-2 rounded-lg bg-orange-50 border border-orange-100">
+                  <p className="text-xs text-orange-800">
+                    <span className="font-semibold">Client requested changes:</span> “{d.approval.comment}”
+                  </p>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -305,7 +319,6 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
             {isSendingApproval ? 'Rendering…' : 'Send for approval'}
           </button>
         )}
-        <StatusDropdown current={order.status} onChange={onStatusChange} loading={isUpdating} />
       </div>
 
       <button onClick={() => setExpanded(e => !e)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">
