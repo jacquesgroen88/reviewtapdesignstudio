@@ -33,6 +33,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   const lastPan     = useRef(null)
   const prefillDone = useRef(false)
   const saveRef     = useRef(() => {})
+  const rightClickHitAsset = useRef(false)   // was the last right-click on a real asset?
 
   const [variantId,   setVariantId]   = useState(prefill?.savedDesign?.variant_id || initialVariantId || product.defaultVariant)
   const [ready,       setReady]       = useState(false)
@@ -162,13 +163,16 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     })
 
     // Right-click on an asset → context menu (Crop/BG-removal/layer/delete).
-    // Browser's default menu is only suppressed when we're showing our own
-    // (spec: "no menu on empty canvas/background" — default stays available there).
+    // The browser's own menu is opened by a SEPARATE, later 'contextmenu' DOM
+    // event (not by 'mousedown') — preventDefault() here doesn't stop it, so
+    // a real contextmenu listener below does that job, gated by this ref.
+    // Default stays available on empty canvas/background (spec requirement).
     canvas.on('mouse:down', opt => {
       const e = opt.e
       if (e.button === 2) {
-        if (opt.target && !opt.target.isBackground && !opt.target.isGuide) {
-          e.preventDefault()
+        const hit = !!(opt.target && !opt.target.isBackground && !opt.target.isGuide)
+        rightClickHitAsset.current = hit
+        if (hit) {
           canvas.setActiveObject(opt.target)
           canvas.renderAll()
           setContextMenu({ x: e.clientX, y: e.clientY, objId: opt.target.id, isQR: !!opt.target.isQR })
@@ -178,6 +182,10 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
         return
       }
     })
+    function onContextMenu(e) {
+      if (rightClickHitAsset.current) e.preventDefault()
+    }
+    canvas.upperCanvasEl.addEventListener('contextmenu', onContextMenu)
 
     // Space-drag (or middle-mouse) = scroll the workspace
     canvas.on('mouse:down', opt => {
@@ -220,6 +228,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     return () => {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup',   onKeyUp)
+      canvas.upperCanvasEl.removeEventListener('contextmenu', onContextMenu)
       canvas.dispose(); clear()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
