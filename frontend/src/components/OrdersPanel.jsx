@@ -226,6 +226,7 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
             <div key={d.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-gray-50">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-brand-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
               <span className="flex-1 min-w-0 text-xs font-medium text-gray-700 truncate">{d.name}</span>
+              {d.created_by_name && <span className="text-xs text-gray-400 shrink-0" title={`Created by ${d.created_by_name}`}>by {d.created_by_name}</span>}
               <span className="text-xs text-gray-400 shrink-0">{d.product_id === 'stand' ? 'Stand' : 'Card'}</span>
               <button onClick={() => onOpenDesign({ ...d, ownerName: order.companyName, logoUrl: order.logoUrl, googleReviewUrl: order.googleReviewUrl })}
                 className="shrink-0 text-xs font-medium text-brand-600 hover:text-brand-700">Edit</button>

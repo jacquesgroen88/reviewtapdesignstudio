@@ -19,9 +19,13 @@ function getClient() {
 
 // ── QR codes ──────────────────────────────────────────────────────────────────
 
-export async function listQRCodes() {
-  const { data, error } = await getClient()
+// Archived codes are hidden from lists/pickers but their /r redirects keep
+// working (getQRCode below is deliberately unfiltered — printed cards live on).
+export async function listQRCodes({ includeArchived = false } = {}) {
+  let q = getClient()
     .from('qr_codes').select('*').order('created_at', { ascending: false })
+  if (!includeArchived) q = q.is('archived_at', null)
+  const { data, error } = await q
   if (error) throw error
   return data ?? []
 }
@@ -32,13 +36,21 @@ export async function getQRCode(id) {
   return data
 }
 
-export async function createQRCode({ id, label, destination, defaultStyle }) {
+export async function createQRCode({ id, label, destination, defaultStyle, createdBy }) {
   const row = { id, label, destination }
   if (defaultStyle !== undefined) row.default_style = defaultStyle
+  if (createdBy) row.created_by = createdBy
   const { data, error } = await getClient()
     .from('qr_codes').insert(row).select().single()
   if (error) throw error
   return data
+}
+
+// Soft delete: hide from lists, keep the redirect alive (printed cards!)
+export async function archiveQRCode(id) {
+  const { error } = await getClient()
+    .from('qr_codes').update({ archived_at: new Date().toISOString() }).eq('id', id)
+  if (error) throw error
 }
 
 export async function updateQRCode(id, { label, destination, defaultStyle }) {
@@ -92,7 +104,14 @@ export async function getAllOrderStatuses() {
 
 // ── Designs (first-class, reusable; an order/job can have many) ───────────────
 
-const DESIGN_META = 'id, name, owner_slug, product_id, variant_id, created_at, updated_at'
+const DESIGN_META = 'id, name, owner_slug, product_id, variant_id, order_number, created_by, updated_by, created_at, updated_at'
+
+// id → display_name for annotating rows with creator names (tiny table)
+export async function getProfileNames() {
+  const { data, error } = await getClient().from('profiles').select('id, display_name')
+  if (error) throw error
+  return Object.fromEntries((data ?? []).map(p => [p.id, p.display_name]))
+}
 
 export async function listDesigns({ owner } = {}) {
   let q = getClient().from('designs').select(DESIGN_META).order('updated_at', { ascending: false })
@@ -107,9 +126,12 @@ export async function getDesign(id) {
   return data
 }
 
-export async function createDesign({ id, name, ownerSlug, productId, variantId, design }) {
+export async function createDesign({ id, name, ownerSlug, productId, variantId, design, orderNumber, createdBy }) {
+  const row = { id, name, owner_slug: ownerSlug, product_id: productId, variant_id: variantId, design }
+  if (orderNumber !== undefined) row.order_number = orderNumber || null
+  if (createdBy) row.created_by = createdBy
   const { data, error } = await getClient().from('designs')
-    .insert({ id, name, owner_slug: ownerSlug, product_id: productId, variant_id: variantId, design })
+    .insert(row)
     .select().single()
   if (error) throw error
   return data
@@ -117,9 +139,11 @@ export async function createDesign({ id, name, ownerSlug, productId, variantId, 
 
 export async function updateDesign(id, fields) {
   const patch = { updated_at: new Date().toISOString() }
-  if (fields.name       !== undefined) patch.name = fields.name
-  if (fields.variantId  !== undefined) patch.variant_id = fields.variantId
-  if (fields.design     !== undefined) patch.design = fields.design
+  if (fields.name        !== undefined) patch.name = fields.name
+  if (fields.variantId   !== undefined) patch.variant_id = fields.variantId
+  if (fields.design      !== undefined) patch.design = fields.design
+  if (fields.orderNumber !== undefined) patch.order_number = fields.orderNumber || null
+  if (fields.updatedBy   !== undefined) patch.updated_by = fields.updatedBy
   const { data, error } = await getClient().from('designs').update(patch).eq('id', id).select().single()
   if (error) throw error
   return data

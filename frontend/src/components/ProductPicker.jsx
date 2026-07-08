@@ -12,6 +12,7 @@ export default function ProductPicker({ onStart, prefill, onCancel }) {
   const [selectedProduct, setSelectedProduct] = useState(initialProduct)
   const [selectedVariant,  setSelectedVariant]  = useState(initialProduct.defaultVariant)
   const [jobName,          setJobName]           = useState(prefill?.companyName || '')
+  const [orderNumber,      setOrderNumber]       = useState(String(prefill?.orderNumber || ''))
 
   const designsByProduct = prefill?.designsByProduct || {}
 
@@ -22,9 +23,10 @@ export default function ProductPicker({ onStart, prefill, onCancel }) {
 
   function handleStart() {
     onStart({
-      jobName:   jobName.trim(),
-      product:   selectedProduct,
-      variantId: selectedVariant,
+      jobName:     jobName.trim(),
+      orderNumber: orderNumber.trim(),
+      product:     selectedProduct,
+      variantId:   selectedVariant,
     })
   }
 
@@ -50,21 +52,36 @@ export default function ProductPicker({ onStart, prefill, onCancel }) {
           )}
         </div>
 
-        {/* Job name (optional) */}
+        {/* Job name + order number (both optional) */}
         <div className="card p-5 space-y-4">
-          <div>
-            <label className="label" htmlFor="jobName">
-              Client / job name <span className="text-gray-400 font-normal">(optional)</span>
-            </label>
-            <input
-              id="jobName"
-              type="text"
-              className="input-field"
-              placeholder="e.g. The Coffee House"
-              value={jobName}
-              onChange={e => setJobName(e.target.value)}
-              autoFocus
-            />
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="label" htmlFor="jobName">
+                Client / job name <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <input
+                id="jobName"
+                type="text"
+                className="input-field"
+                placeholder="e.g. The Coffee House"
+                value={jobName}
+                onChange={e => setJobName(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="w-32">
+              <label className="label" htmlFor="orderNumber">
+                Order # <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <input
+                id="orderNumber"
+                type="text"
+                className="input-field"
+                placeholder="e.g. 1703"
+                value={orderNumber}
+                onChange={e => setOrderNumber(e.target.value)}
+              />
+            </div>
           </div>
         </div>
 

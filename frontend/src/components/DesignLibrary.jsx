@@ -18,6 +18,7 @@ const STATUS_CHIP = {
 }
 
 const safeName = (s) => (s || 'design').replace(/[^a-zA-Z0-9 _-]/g, '').trim().replace(/\s+/g, '_')
+const fmtShortDate = (iso) => iso ? new Date(iso).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : ''
 
 export default function DesignLibrary({ onNewDesign, onOpenDesign }) {
   const [designs, setDesigns] = useState([])
@@ -113,9 +114,13 @@ export default function DesignLibrary({ onNewDesign, onOpenDesign }) {
           if (!res.ok) throw new Error(await res.text())
           const full = await res.json()
           const rendered = await renderDesignFaces(full)
+          // Unified naming (Feature H): prefix the order # unless the design
+          // name already carries it (auto-named designs do)
+          const order = String(full.order_number || '').replace(/^#/, '').trim()
+          const prefix = order && !full.name.includes(order) ? `${order}_` : ''
           for (const r of rendered) {
             const face = rendered.length > 1 ? `_${r.faceLabel}` : ''
-            zip.file(`${safeName(full.name)}_${r.variantLabel.replace(/\s+/g, '')}${face}.tiff`, canvasToTiffBlob(r.canvas))
+            zip.file(`${prefix}${safeName(full.name)}_${r.variantLabel.replace(/\s+/g, '')}${face}.tiff`, canvasToTiffBlob(r.canvas))
           }
         } catch (err) {
           console.error('bulk export failed for', ids[i], err)
@@ -215,7 +220,9 @@ export default function DesignLibrary({ onNewDesign, onOpenDesign }) {
                   )}
                   <p className="text-xs text-gray-400 mt-0.5">
                     {PRODUCT_LABEL[d.product_id] || d.product_id} · {d.variant_id}
-                    {d.owner_slug ? ' · linked to an order/job' : ''}
+                    {d.order_number ? <> · #{d.order_number}</> : (d.owner_slug ? ' · linked to an order/job' : '')}
+                    {d.created_by_name && <> · by {d.created_by_name} {fmtShortDate(d.created_at)}</>}
+                    {d.updated_by_name && d.updated_by_name !== d.created_by_name && <> · edited by {d.updated_by_name}</>}
                   </p>
                 </div>
                 <button className="btn-secondary text-sm py-2" onClick={() => onOpenDesign(d)}>Open</button>

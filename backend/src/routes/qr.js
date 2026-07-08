@@ -1,6 +1,7 @@
 import express from 'express'
 import { nanoid } from 'nanoid'
-import { listQRCodes, getQRCode, createQRCode, updateQRCode, deleteQRCode, bulkImport } from '../services/database.js'
+import { listQRCodes, getQRCode, createQRCode, updateQRCode, deleteQRCode, archiveQRCode, bulkImport, getProfileNames } from '../services/database.js'
+import { requireAdmin } from '../middleware/auth.js'
 
 const router = express.Router()
 
@@ -20,7 +21,8 @@ function sanitizeStyle(style) {
 }
 
 router.get('/', async (req, res) => {
-  res.json(await listQRCodes())
+  const [codes, names] = await Promise.all([listQRCodes(), getProfileNames()])
+  res.json(codes.map(q => ({ ...q, created_by_name: q.created_by ? names[q.created_by] || null : null })))
 })
 
 router.get('/:id', async (req, res) => {
@@ -48,7 +50,7 @@ router.post('/', async (req, res) => {
   try {
     const existing = await listQRCodes()
     const finalLabel = uniqueLabel(label.trim(), existing)
-    const qr = await createQRCode({ id, label: finalLabel, destination: destination.trim(), defaultStyle: sanitizeStyle(style) })
+    const qr = await createQRCode({ id, label: finalLabel, destination: destination.trim(), defaultStyle: sanitizeStyle(style), createdBy: req.user?.id })
     res.status(201).json(qr)
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'ID already exists' })
@@ -63,10 +65,19 @@ router.patch('/:id', async (req, res) => {
   res.json(await updateQRCode(req.params.id, { label, destination, defaultStyle: sanitizeStyle(style) }))
 })
 
-router.delete('/:id', async (req, res) => {
+// "Delete" = archive: the code vanishes from lists/pickers but /r/:id keeps
+// redirecting, so printed cards in the field stay alive. True deletion is
+// admin-only (?hard=true) for codes that were never printed.
+router.delete('/:id', async (req, res, next) => {
   const qr = await getQRCode(req.params.id)
   if (!qr) return res.status(404).json({ error: 'Not found' })
-  await deleteQRCode(req.params.id)
+  if (req.query.hard === 'true') {
+    return requireAdmin(req, res, async () => {
+      await deleteQRCode(req.params.id)
+      res.status(204).end()
+    })
+  }
+  await archiveQRCode(req.params.id)
   res.status(204).end()
 })
 

@@ -1,6 +1,6 @@
 import express from 'express'
 import { fetchOrders, fetchOrder } from '../services/formaloo.js'
-import { getOrderStatus, setOrderStatus, getAllOrderStatuses, listDesignsByOwner } from '../services/database.js'
+import { getOrderStatus, setOrderStatus, getAllOrderStatuses, listDesignsByOwner, getProfileNames } from '../services/database.js'
 
 const router = express.Router()
 
@@ -17,15 +17,16 @@ router.get('/', async (req, res) => {
     const fetchPageSize = search ? 300 : pageSize
     const { orders, count } = await fetchOrders({ page: fetchPage, pageSize: fetchPageSize, onlyDesignNeeded })
 
-    const statuses  = await getAllOrderStatuses()
+    const [statuses, designsMap, names] = await Promise.all([
+      getAllOrderStatuses(), listDesignsByOwner(), getProfileNames(),
+    ])
     const statusMap = Object.fromEntries(statuses.map(s => [s.row_slug, s]))
-    const designsMap = await listDesignsByOwner()
 
     const enriched = orders.map(order => ({
       ...order,
       status: statusMap[order.rowSlug]?.status ?? (order.orderedStand || order.orderedCard ? 'pending' : 'not_needed'),
       note:   statusMap[order.rowSlug]?.note   ?? null,
-      designs: designsMap[order.rowSlug] ?? [],
+      designs: (designsMap[order.rowSlug] ?? []).map(d => ({ ...d, created_by_name: d.created_by ? names[d.created_by] || null : null })),
       hasDesign: !!designsMap[order.rowSlug]?.length,
     }))
 

@@ -221,6 +221,13 @@ Note: storing `originalSrc` grows the JSONB. Acceptable now; if design rows get 
 
 **Static import rule**: `react-easy-crop` is small; import it statically (Gotcha 11: anything a designer needs mid-job must not be a lazy chunk).
 
+### Right-click context menu on the canvas (added 2026-07-08 per Jacques)
+Right-clicking an asset on the canvas opens a context menu at the cursor (suppress the browser menu via `contextmenu` handler on the canvas element; Fabric identifies the target object):
+- On a **logo**: Crop… (opens the crop modal), Remove background / Restore background (toggles the existing bg-removal pipeline), Bring forward, Send backward, Delete.
+- On a **QR**: Bring forward, Send backward, Delete (crop/bg-removal don't apply).
+- On empty canvas / background: no menu (browser default suppressed only over assets).
+The menu reuses the existing `Menu.jsx` component styling and calls the same handlers as LogoPanel/CanvasToolbar (single source of behaviour — the panel buttons stay). Ships as part of Feature D (crop) since the crop modal is its main payload.
+
 ### Acceptance criteria
 - Crop at upload and crop of an already-placed logo both work; the placed logo keeps its position and on-canvas size.
 - Re-opening crop shows the previous rect; Cancel changes nothing.
@@ -261,8 +268,29 @@ Replace "export PDF, attach in WhatsApp, wait for a reply" with a one-tap approv
 4. Client opens the page: artwork full-screen (pinch-zoomable), company name, **Approve** and **Request changes** (+ comment box). No login.
 5. Approve → `order_status` flips `pending_approval → pending_print` automatically, `approved_at` stamped. Request changes → status back to `in_progress`, comment shown on the order card.
 
-### Auto-send upgrade (IN scope, per Jacques 2026-07-07)
-After the manual tap-to-send version works, add **Send via Reviewtap System**: the backend sends the WhatsApp message directly through the GHL (Reviewtap System) API using the client's number, so the designer never leaves the studio. Client-facing copy says "Reviewtap", never GHL. Manual wa.me flow stays as fallback.
+### Sending the approval message (updated 2026-07-08 per Jacques)
+
+**Primary (day one): one-click WhatsApp share (wa.me).** The "Send for approval" button produces a `wa.me/<clientNumber>?text=<prefilled message + approval link>` deep link — one click opens WhatsApp (desktop or phone) with the message and link already typed; the designer just hits send. Works with zero infrastructure, keeps the personal sender identity, and remains the permanent fallback. The client's number comes from the Formaloo WhatsApp field; if missing, the button falls back to copy-link-to-clipboard.
+
+**Upgrade: auto-send via the Reviewtap System (GHL).** Backend calls the GHL Conversations API (existing ReviewTap PIT key) to send the WhatsApp message directly — designer never leaves the studio. Client-facing copy says "Reviewtap", never GHL. Mechanics and prerequisites:
+1. **WhatsApp must be connected** on the ReviewTap GHL sub-account — CONFIRMED ACTIVE by Jacques 2026-07-08. Jacques creates the message template (exact text provided by Claude; category Utility); build needs the approved template's name.
+2. **A WhatsApp template is required** for business-initiated messages. Meta's rule: free-form WhatsApp messages are only allowed within 24h of the client's last inbound message; an approval request sent cold (client only filled the Formaloo form) needs a pre-approved template. One template covers everything, created once in GHL's template manager and submitted to Meta (usually approved within hours):
+   > "Hi {{1}}, your ReviewTap design for order {{2}} is ready to view! Open it here to approve or request changes: {{3}}. Reply here if you have any questions."
+3. The backend fires the template with variables (client name, order number, approval link) and logs the send on the GHL contact's timeline, so the approval history is visible in the pipeline.
+4. **Auto-chase**: if no response AND the link is unopened/unanswered after 48h, send one reminder via the same template mechanism (max 1; the order card shows "reminded").
+
+### Approval page rendering — print vs client view (rule, never forget)
+The client must see the **product mockup**, not the raw print file. The renderer (`lib/renderDesign.js`) gets a `mode` parameter:
+- `mode: 'mockup'` (approval page, PDF mockups, JPEG previews): background = `face.mockupTemplate || face.template` — what the product actually looks like.
+- `mode: 'print'` (TIFF, Drive, bulk export): background = `face.template` — the print-production file with the print-correct background per current editor rules.
+This mirrors the editor's existing behaviour (`exactFaceCanvas` uses mockupTemplate for PDF/JPEG and template for TIFF/Drive) and MUST hold for every future export path.
+
+### Extra approval-flow improvements (agreed 2026-07-08)
+- Mockup-on-product rendering on the approval page (rule above).
+- **Seen tracking**: stamp `viewed_at` when the client opens the link (distinguish "never opened" from "opened, no reply" for chasing).
+- **Approved → fulfillment handoff**: approval flips status to pending_print, design automatically qualifies for the library's "Select approved" bulk export.
+- **One link per order**: if an order has multiple designs (stand + card), a single approval page lists all of them, each independently approvable.
+- **Version history**: a re-sent approval after change requests shows "updated since your feedback" with the previous comment.
 
 ### Data model
 ```sql
@@ -331,6 +359,16 @@ Null = plain (all existing codes render exactly as before). `POST /api/qr` and `
 
 ---
 
+## 6d. Feature H — Order number field + unified export filenames (added 2026-07-08)
+
+### Order number on new designs
+The ProductPicker ("New design") gains an optional **Order #** field next to the client/job name. When a design is started from an order card it's prefilled from Formaloo; when started from the library it's manual and optional. The value is stored on the design (new nullable `order_number` text column, or carried in the auto-name) and drives naming + filenames.
+
+### One filename convention across ALL export paths
+`{order#}_{Client}_{Stand|Card}[_{Front|Back}][_{style}]_{YYYY-MM-DD}.{ext}` — order number omitted when absent, client falls back to the design name. Applies to: editor PDF/JPEG/TIFF/Drive exports (currently only client name + variant), bulk-export zip entries, and QR PNG downloads keep their existing (label/id/style/date) scheme. ~1 hour, lands with Phase 3.
+
+---
+
 ## 7. Improvement backlog (investigated)
 
 Ranked. P1 = do with the phases above; P2 = next; P3 = when it earns its keep.
@@ -366,7 +404,7 @@ Dependencies: attribution needs auth; everything else is independent. Suggested 
 | **1. Foundations** | Routing (Feature A) + QR created date (Feature E) + dead-code removal (I-3) + error-handling fixes (I-2) — BUILT 2026-07-07 | ~2 days |
 | **1b. QR styling** | Feature G: style picker on create, styled/preset downloads, editor prefill | 0.5–1 day |
 | **2. Auth** | Feature B end-to-end incl. DB lockdown sequence, Team page, CORS (I-1) | 2–3 days |
-| **3. Attribution** | Feature C + QR delete guard (I-4) | ~1 day |
+| **3. Attribution** | Feature C + QR delete guard (I-4) + Feature H (order # field, unified filenames) | ~1 day |
 | **4. Crop** | Feature D | 1.5–2 days |
 | **4b. Approvals** | Feature F: approval link + WhatsApp tap-to-send, then GHL auto-send | ~1.5 days |
 | **5. Hardening** | I-5 (Supabase Pro decision or edge redirect), I-6 autosave, I-7 thumbnails, I-8 search | 2–3 days |

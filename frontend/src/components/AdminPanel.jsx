@@ -38,14 +38,19 @@ export default function AdminPanel() {
     setTimeout(() => setMsg(null), 4000)
   }
 
-  async function handleDelete(id, label) {
-    if (!confirm(`Delete "${label}"? This cannot be undone.`)) return
+  // Archive, not delete: printed cards encode /r/<id> forever, so the redirect
+  // must keep working. Archiving hides the code from lists; scans stay alive.
+  async function handleDelete(qr) {
+    const warning = qr.scan_count > 0
+      ? `"${qr.label}" has been scanned ${qr.scan_count} time${qr.scan_count === 1 ? '' : 's'} — it is almost certainly on printed material.\n\nArchive it? Printed cards KEEP WORKING; the code just disappears from your lists.`
+      : `Archive "${qr.label}"? If it was ever printed, scans keep working; the code just disappears from your lists.`
+    if (!confirm(warning)) return
     try {
-      const res = await apiFetch(`/api/qr/${id}`, { method: 'DELETE' })
+      const res = await apiFetch(`/api/qr/${qr.id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error(await res.text())
-      showMsg('success', `"${label}" deleted`)
+      showMsg('success', `"${qr.label}" archived — its printed QR codes still redirect`)
     } catch (err) {
-      showMsg('error', `Delete failed: ${err.message || 'network error'}`)
+      showMsg('error', `Archive failed: ${err.message || 'network error'}`)
     }
     load()
   }
@@ -172,6 +177,7 @@ export default function AdminPanel() {
                   </td>
                   <td className="px-4 py-3">
                     <span className="text-xs text-gray-500" title={qr.created_at || ''}>{fmtDate(qr.created_at)}</span>
+                    {qr.created_by_name && <span className="block text-xs text-gray-400">by {qr.created_by_name}</span>}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <span className="text-sm font-semibold text-gray-700">{qr.scan_count.toLocaleString()}</span>
@@ -187,7 +193,7 @@ export default function AdminPanel() {
                       <ActionBtn title="Edit" onClick={() => { setEditTarget(qr); setShowForm(true) }}>
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                       </ActionBtn>
-                      <ActionBtn title="Delete" onClick={() => handleDelete(qr.id, qr.label)} danger>
+                      <ActionBtn title="Archive (printed codes keep working)" onClick={() => handleDelete(qr)} danger>
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M9 6V4h6v2"/></svg>
                       </ActionBtn>
                     </div>

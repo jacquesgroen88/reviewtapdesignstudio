@@ -308,7 +308,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
         const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight()
         pdf.addImage(cv.toDataURL('image/png', 1), 'PNG', 0, 0, pw, ph)
       }
-      pdf.save(buildFilename(jobName, variant.label, '', 'pdf'))
+      pdf.save(buildFilename({ orderNumber: prefill?.orderNumber, client: jobName, variantLabel: variant.label, faceLabel: '', ext: 'pdf' }))
       showMsg('success', 'Mockup PDF downloaded')
     } catch (err) { console.error(err); showMsg('error', 'PDF export failed') }
     finally { setExporting(false) }
@@ -322,7 +322,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
         const out = document.createElement('canvas')
         out.width = cv.width; out.height = cv.height
         const ctx = out.getContext('2d'); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, out.width, out.height); ctx.drawImage(cv, 0, 0)
-        downloadBlob(dataURLtoBlob(out.toDataURL('image/jpeg', 0.92)), buildFilename(jobName, variant.label, layout.length > 1 ? e.face.label : '', 'jpg'))
+        downloadBlob(dataURLtoBlob(out.toDataURL('image/jpeg', 0.92)), buildFilename({ orderNumber: prefill?.orderNumber, client: jobName, variantLabel: variant.label, faceLabel: layout.length > 1 ? e.face.label : '', ext: 'jpg' }))
       }
       showMsg('success', 'JPEG preview downloaded')
     } catch (err) { console.error(err); showMsg('error', 'JPEG export failed') }
@@ -336,7 +336,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
         const cv = await exactFaceCanvas(e, e.face.template)
         const id = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height)
         const buf = UTIF.encodeImage(id.data.buffer, cv.width, cv.height, { t282: [300], t283: [300], t296: [2] })
-        downloadBlob(new Blob([buf], { type: 'image/tiff' }), buildFilename(jobName, variant.label, layout.length > 1 ? e.face.label : '', 'tiff'))
+        downloadBlob(new Blob([buf], { type: 'image/tiff' }), buildFilename({ orderNumber: prefill?.orderNumber, client: jobName, variantLabel: variant.label, faceLabel: layout.length > 1 ? e.face.label : '', ext: 'tiff' }))
       }
       showMsg('success', 'Print TIFF downloaded')
     } catch (err) { console.error(err); showMsg('error', 'TIFF export failed') }
@@ -349,7 +349,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       for (const e of layout) {
         const cv = await exactFaceCanvas(e, e.face.template)
         const blob = dataURLtoBlob(cv.toDataURL('image/png', 1))
-        const filename = buildFilename(jobName, variant.label, layout.length > 1 ? e.face.label : '', 'tiff')
+        const filename = buildFilename({ orderNumber: prefill?.orderNumber, client: jobName, variantLabel: variant.label, faceLabel: layout.length > 1 ? e.face.label : '', ext: 'tiff' })
         const form = new FormData()
         form.append('file', blob, filename)
         form.append('businessName', jobName || 'ReviewTap')
@@ -385,7 +385,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     }
     const res = await apiFetch('/api/designs', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, ownerSlug: prefill?.rowSlug || null, productId: product.id, variantId, design }),
+      body: JSON.stringify({ name, ownerSlug: prefill?.rowSlug || null, productId: product.id, variantId, design, orderNumber: prefill?.orderNumber || null }),
     })
     if (!res.ok) throw new Error(await res.text())
     const d = await res.json()
@@ -438,7 +438,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       const name = `${(designName || product.name).trim()} (copy)`
       const res = await apiFetch('/api/designs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, ownerSlug: prefill?.rowSlug || null, productId: product.id, variantId, design: { assets: serializeAssets() } }),
+        body: JSON.stringify({ name, ownerSlug: prefill?.rowSlug || null, productId: product.id, variantId, design: { assets: serializeAssets() }, orderNumber: prefill?.orderNumber || null }),
       })
       if (!res.ok) throw new Error(await res.text())
       const d = await res.json()
@@ -741,8 +741,13 @@ function swapBgElement(fabricImg, src, faceWidth, xFull) {
   })
 }
 
-function buildFilename(jobName, variantLabel, faceLabel, ext) {
-  const base = [jobName, variantLabel, faceLabel].filter(Boolean).join('_') || 'Design'
+// Unified export naming (spec Feature H):
+// {order#}_{Client}_{WhiteStand|BlackCard|...}[_{Front|Back}]_{YYYY-MM-DD}.{ext}
+function buildFilename({ orderNumber, client, variantLabel, faceLabel, ext }) {
+  const order = String(orderNumber || '').replace(/^#/, '').trim()
+  const date  = new Date().toISOString().slice(0, 10)
+  const base = [order, client, (variantLabel || '').replace(/\s+/g, ''), faceLabel, date]
+    .filter(Boolean).join('_') || 'Design'
   return base.replace(/[^a-zA-Z0-9_.\- ]/g, '_').replace(/\s+/g, '_') + '.' + ext
 }
 

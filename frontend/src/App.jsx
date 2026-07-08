@@ -72,8 +72,13 @@ export default function App() {
 
   // Start a brand-new design (from the picker). A design row is created on first Save.
   function handleStart(sessionData) {
-    // sessionData = { jobName, product, variantId }
-    const prefill = { ...(pendingPrefill || {}), designId: null, savedDesign: null }
+    // sessionData = { jobName, orderNumber, product, variantId }
+    const prefill = {
+      ...(pendingPrefill || {}),
+      // Typed order # wins over the one carried from the order card
+      orderNumber: sessionData.orderNumber || pendingPrefill?.orderNumber || '',
+      designId: null, savedDesign: null,
+    }
     const origin = pendingPrefill?.rowSlug ? 'orders' : 'studio'
     setSession({
       ...sessionData,
@@ -103,6 +108,7 @@ export default function App() {
         designId:    full.id,
         designName:  full.name,
         companyName: extras.ownerName || full.name,
+        orderNumber: full.order_number || extras.orderNumber || '',
         logoUrl:         extras.logoUrl,
         googleReviewUrl: extras.googleReviewUrl,
         savedDesign: { name: full.name, design: full.design },
