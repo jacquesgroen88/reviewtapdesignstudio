@@ -5,7 +5,12 @@ import DesignCanvas   from './components/DesignCanvas.jsx'
 import AdminPanel     from './components/AdminPanel.jsx'
 import OrdersPanel    from './components/OrdersPanel.jsx'
 import DesignLibrary  from './components/DesignLibrary.jsx'
+import Login          from './components/Login.jsx'
+import Welcome        from './components/Welcome.jsx'
+import TeamPanel      from './components/TeamPanel.jsx'
 import { getProduct } from './lib/products.js'
+import { supabase, authConfigured } from './lib/supabase.js'
+import { apiFetch } from './lib/api.js'
 
 // Each editor session gets a stable key so the mounted DesignCanvas survives
 // the /designstudio/new → /designstudio/:id URL swap after the first save.
@@ -14,10 +19,48 @@ let sessionCounter = 0
 export default function App() {
   const [session,        setSession]        = useState(null)
   const [pendingPrefill, setPendingPrefill] = useState(null)    // context awaiting product choice
+  // Auth: authSession = Supabase session; profile = team row (null until /welcome)
+  const [authReady,   setAuthReady]   = useState(false)
+  const [authSession, setAuthSession] = useState(null)
+  const [profile,     setProfile]     = useState(null)
+  const [profileChecked, setProfileChecked] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
 
   const inEditor = !!session && /^\/designstudio\/[^/]+$/.test(location.pathname)
+
+  // ── Auth session tracking ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!authConfigured) return
+    supabase.auth.getSession().then(({ data }) => {
+      setAuthSession(data.session)
+      setAuthReady(true)
+    })
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
+      setAuthSession(s)
+      setAuthReady(true)
+    })
+    return () => sub.subscription.unsubscribe()
+  }, [])
+
+  // Load the team profile once signed in (null profile → /welcome setup)
+  useEffect(() => {
+    if (!authSession) { setProfile(null); setProfileChecked(false); return }
+    let cancelled = false
+    apiFetch('/api/team/me')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!cancelled) { setProfile(d?.profile ?? null); setProfileChecked(true) } })
+      .catch(() => { if (!cancelled) setProfileChecked(true) })
+    return () => { cancelled = true }
+  }, [authSession?.access_token]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function signOut() {
+    if (inEditor && !confirm('Sign out? Unsaved changes will be lost.')) return
+    setSession(null)
+    setPendingPrefill(null)
+    await supabase.auth.signOut()
+    navigate('/login', { replace: true })
+  }
 
   // Warn before closing/refreshing the tab while a design is open in the editor
   useEffect(() => {
@@ -44,7 +87,7 @@ export default function App() {
 
   // Build an editor session from a saved design (used by open-clicks AND deep links)
   const openDesignById = useCallback(async (id, origin = 'studio', extras = {}) => {
-    const res = await fetch(`/api/designs/${id}`)
+    const res = await apiFetch(`/api/designs/${id}`)
     if (!res.ok) throw new Error('Could not load that design — it may have been deleted.')
     const full = await res.json()
     const product = getProduct(full.product_id)
@@ -118,6 +161,47 @@ export default function App() {
     setPendingPrefill(null)
   }
 
+  // ── Auth gates ──────────────────────────────────────────────────────────────
+  if (!authConfigured) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+        <div className="card max-w-md p-8 text-center space-y-2">
+          <h1 className="text-lg font-bold text-gray-900">Studio not configured</h1>
+          <p className="text-sm text-gray-500">
+            VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are not set for this deploy,
+            so sign-in can't work. Set them in Netlify env vars and redeploy.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!authReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <svg className="animate-spin w-6 h-6 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+      </div>
+    )
+  }
+
+  const onAuthPage = location.pathname === '/login' || location.pathname === '/welcome'
+  if (!authSession && !onAuthPage) return <AuthShell><Navigate to="/login" replace /></AuthShell>
+  // Signed in but no profile yet (fresh invite) → finish setup first
+  if (authSession && profileChecked && !profile && !onAuthPage) return <AuthShell><Navigate to="/welcome" replace /></AuthShell>
+
+  if (onAuthPage) {
+    return (
+      <AuthShell>
+        <Routes>
+          <Route path="/login" element={authSession && profile ? <Navigate to="/orders" replace /> : <Login />} />
+          <Route path="/welcome" element={<Welcome session={authSession} profile={profile} onProfileSaved={(p) => { if (p) setProfile(p) }} />} />
+        </Routes>
+      </AuthShell>
+    )
+  }
+
+  const isAdmin = profile?.role === 'admin'
+
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
       {/* Header */}
@@ -156,17 +240,35 @@ export default function App() {
                 </svg>
                 QR Codes
               </NavTab>
+              {isAdmin && (
+                <NavTab to="/team" onClick={guardedNavClick}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                  </svg>
+                  Team
+                </NavTab>
+              )}
             </nav>
           </div>
 
-          {inEditor && (
-            <button onClick={leaveEditor} className="btn-ghost text-sm">
+          <div className="flex items-center gap-3">
+            {inEditor && (
+              <button onClick={leaveEditor} className="btn-ghost text-sm">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M19 12H5M12 5l-7 7 7 7"/>
+                </svg>
+                {session.origin === 'orders' ? 'Back to orders' : 'Back to library'}
+              </button>
+            )}
+            <Link to="/welcome" title="Account settings" className="text-sm text-gray-500 hover:text-gray-800 font-medium">
+              {profile?.display_name || authSession?.user?.email}
+            </Link>
+            <button onClick={signOut} className="btn-ghost text-sm" title="Sign out">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M19 12H5M12 5l-7 7 7 7"/>
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
               </svg>
-              {session.origin === 'orders' ? 'Back to orders' : 'Back to library'}
             </button>
-          )}
+          </div>
         </div>
       </header>
 
@@ -196,11 +298,17 @@ export default function App() {
             />
           } />
           <Route path="/qrcodes" element={<AdminPanel />} />
+          {isAdmin && <Route path="/team" element={<TeamPanel />} />}
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
     </div>
   )
+}
+
+// Minimal chrome for login/welcome (no nav — the user isn't in yet)
+function AuthShell({ children }) {
+  return <div className="min-h-screen flex flex-col bg-gray-50">{children}</div>
 }
 
 // Editor route: designId === 'new' → picker (no session) or fresh editor (session);

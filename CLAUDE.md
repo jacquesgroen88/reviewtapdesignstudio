@@ -226,6 +226,18 @@ button becomes **Edit** and the order stays fully reusable.
 
 ---
 
+## Auth (added 2026-07-08, Phase 2)
+Supabase Auth. Frontend: `lib/supabase.js` (session) + `lib/api.js` (`apiFetch`
+attaches the bearer token — use it for ALL /api calls). Backend:
+`middleware/auth.js` (`requireAuth` on every /api route except /api/health;
+`requireAdmin` for team management). `routes/team.js` = invite (magic link →
+/welcome), list, remove. `profiles(id, display_name, role)` in Supabase.
+PUBLIC always: `/r/:code`, keepalive, proxy-image (host-allowlisted instead —
+it's loaded as a plain <img>/canvas URL and can't carry headers).
+First-time flow: invite email → /welcome → set name + password → /orders.
+Deploy sequencing + RLS lockdown steps: see DEPLOY-PHASE2.md (RLS flip only
+AFTER the live site is verified on SUPABASE_SERVICE_KEY).
+
 ## Environment variables (set in Netlify → Site settings → Env vars)
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY` (or `SUPABASE_SERVICE_KEY`)
 - `FORMALOO_API_KEY`, `FORMALOO_API_SECRET`, `FORMALOO_FORM_SLUG=CGQse2u9`, `FORMALOO_WORKSPACE=cHQuChHR`

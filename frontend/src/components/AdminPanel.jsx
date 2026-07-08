@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 // Static imports (Gotcha 11): QR generation must live in the main bundle
 import { generateStyledQR, styleToGenOpts, STAND_PRESETS, PLAIN_STYLE, QR_STYLES } from '../lib/qr.js'
+import { apiFetch } from '../lib/api.js'
 
 const BASE_URL = import.meta.env.VITE_QR_BASE_URL || `${window.location.origin}/r`
 
@@ -23,7 +24,7 @@ export default function AdminPanel() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/qr')
+      const res = await apiFetch('/api/qr')
       if (!res.ok) throw new Error(await res.text())
       setQrCodes(await res.json())
     } catch { setError('Could not connect to backend. Is it running?') }
@@ -40,7 +41,7 @@ export default function AdminPanel() {
   async function handleDelete(id, label) {
     if (!confirm(`Delete "${label}"? This cannot be undone.`)) return
     try {
-      const res = await fetch(`/api/qr/${id}`, { method: 'DELETE' })
+      const res = await apiFetch(`/api/qr/${id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error(await res.text())
       showMsg('success', `"${label}" deleted`)
     } catch (err) {
@@ -246,7 +247,7 @@ function QRFormModal({ initial, onClose, onSaved, onMsg }) {
     setSaving(true)
     try {
       if (isEdit) {
-        const res = await fetch(`/api/qr/${initial.id}`, {
+        const res = await apiFetch(`/api/qr/${initial.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ label: label.trim(), destination: destination.trim(), style }),
@@ -254,7 +255,7 @@ function QRFormModal({ initial, onClose, onSaved, onMsg }) {
         if (!res.ok) throw new Error(await res.text())
         onMsg('success', 'QR code updated')
       } else {
-        const res = await fetch('/api/qr', {
+        const res = await apiFetch('/api/qr', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ label: label.trim(), destination: destination.trim(), id: customId.trim() || undefined, style }),
@@ -329,7 +330,7 @@ function BulkImportModal({ onClose, onImported, onMsg }) {
     if (entries.length === 0) { setErr('No valid rows found. Use tab-separated: Label[TAB]URL'); return }
     setImporting(true)
     try {
-      const res = await fetch('/api/qr/bulk-import', {
+      const res = await apiFetch('/api/qr/bulk-import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entries }),

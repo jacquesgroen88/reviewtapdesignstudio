@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { QR_STYLES, generateStyledQR, styleToGenOpts, QR_BASE_URL as BASE_URL } from '../lib/qr.js'
+import { apiFetch } from '../lib/api.js'
 
 let qrIdCounter = 0
 
@@ -41,7 +42,7 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
 
   async function loadSaved() {
     try {
-      const res = await fetch('/api/qr')
+      const res = await apiFetch('/api/qr')
       if (!res.ok) throw new Error()
       const codes = await res.json()
       setSavedCodes(codes)
@@ -89,7 +90,7 @@ export default function QRPanel({ onQRReady, variantId, prefillUrl, prefillLabel
       } else {
         // The style used here is saved as the code's default (presentation only)
         const style = { styleId, fg: fgColor, bg: bgColor, transparent: transparentBg, ec: ecLevel }
-        const res = await fetch('/api/qr', {
+        const res = await apiFetch('/api/qr', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ label: label.trim(), destination: destination.trim(), style }),

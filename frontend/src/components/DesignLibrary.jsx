@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 // Static imports (Gotcha 11): bulk export must survive redeploys mid-session
 import JSZip from 'jszip'
 import { renderDesignFaces, canvasToTiffBlob } from '../lib/renderDesign.js'
+import { apiFetch } from '../lib/api.js'
 
 const PRODUCT_LABEL = { stand: 'Stand', card: 'Card' }
 
@@ -31,7 +32,7 @@ export default function DesignLibrary({ onNewDesign, onOpenDesign }) {
   const load = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const res = await fetch('/api/designs')
+      const res = await apiFetch('/api/designs')
       if (!res.ok) throw new Error(await res.text())
       setDesigns(await res.json())
     } catch {
@@ -44,7 +45,7 @@ export default function DesignLibrary({ onNewDesign, onOpenDesign }) {
     const name = draft.trim()
     if (name) {
       try {
-        const res = await fetch(`/api/designs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+        const res = await apiFetch(`/api/designs/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
         if (!res.ok) throw new Error(await res.text())
         setDesigns(prev => prev.map(d => d.id === id ? { ...d, name } : d))
         setError(null)
@@ -57,7 +58,7 @@ export default function DesignLibrary({ onNewDesign, onOpenDesign }) {
 
   async function duplicate(d) {
     try {
-      const res = await fetch(`/api/designs/${d.id}/duplicate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+      const res = await apiFetch(`/api/designs/${d.id}/duplicate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
       if (!res.ok) throw new Error(await res.text())
       const copy = await res.json()
       setDesigns(prev => [copy, ...prev])
@@ -70,7 +71,7 @@ export default function DesignLibrary({ onNewDesign, onOpenDesign }) {
   async function remove(d) {
     if (!confirm(`Delete “${d.name}”?`)) return
     try {
-      const res = await fetch(`/api/designs/${d.id}`, { method: 'DELETE' })
+      const res = await apiFetch(`/api/designs/${d.id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error(await res.text())
       setDesigns(prev => prev.filter(x => x.id !== d.id))
       setSelected(prev => { const n = new Set(prev); n.delete(d.id); return n })
@@ -108,7 +109,7 @@ export default function DesignLibrary({ onNewDesign, onOpenDesign }) {
       for (let i = 0; i < ids.length; i++) {
         const meta = designs.find(d => d.id === ids[i])
         try {
-          const res = await fetch(`/api/designs/${ids[i]}`)
+          const res = await apiFetch(`/api/designs/${ids[i]}`)
           if (!res.ok) throw new Error(await res.text())
           const full = await res.json()
           const rendered = await renderDesignFaces(full)

@@ -7,6 +7,7 @@ import { jsPDF } from 'jspdf'
 import UTIF from 'utif'
 import { DISPLAY_SCALE } from '../lib/products.js'
 import { generateStyledQR, QR_BASE_URL } from '../lib/qr.js'
+import { apiFetch } from '../lib/api.js'
 import { useHistory } from '../hooks/useHistory.js'
 import LogoPanel     from './LogoPanel.jsx'
 import CanvasToolbar from './CanvasToolbar.jsx'
@@ -355,7 +356,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
         form.append('orderNumber', prefill?.orderNumber || '')
         form.append('productId', product.id)
         form.append('filename', filename)
-        const res = await fetch('/api/upload', { method: 'POST', body: form })
+        const res = await apiFetch('/api/upload', { method: 'POST', body: form })
         if (!res.ok) throw new Error(await res.text())
       }
       showMsg('success', 'Sent to Drive')
@@ -375,14 +376,14 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     const design = { assets: serializeAssets() }
     const name = (designName || '').trim() || `${product.name} design`
     if (currentDesignId) {
-      const res = await fetch(`/api/designs/${currentDesignId}`, {
+      const res = await apiFetch(`/api/designs/${currentDesignId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, variantId, design }),
       })
       if (!res.ok) throw new Error(await res.text())
       return currentDesignId
     }
-    const res = await fetch('/api/designs', {
+    const res = await apiFetch('/api/designs', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, ownerSlug: prefill?.rowSlug || null, productId: product.id, variantId, design }),
     })
@@ -398,7 +399,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     const name = (designName || '').trim()
     if (!name) return
     try {
-      const res = await fetch(`/api/designs/${currentDesignId}`, {
+      const res = await apiFetch(`/api/designs/${currentDesignId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
       })
       if (!res.ok) throw new Error(await res.text())
@@ -409,7 +410,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   async function setStatus(status) {
     if (!prefill?.rowSlug) return
     try {
-      const res = await fetch(`/api/orders/${prefill.rowSlug}/status`, {
+      const res = await apiFetch(`/api/orders/${prefill.rowSlug}/status`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
       })
       if (!res.ok) throw new Error(await res.text())
@@ -435,7 +436,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
     setExporting(true)
     try {
       const name = `${(designName || product.name).trim()} (copy)`
-      const res = await fetch('/api/designs', {
+      const res = await apiFetch('/api/designs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, ownerSlug: prefill?.rowSlug || null, productId: product.id, variantId, design: { assets: serializeAssets() } }),
       })
@@ -463,7 +464,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
       for (const qr of qrCodes) {
         const dataUrl = await generateStyledQR(`${QR_BASE_URL}/${qr.id}`, qrStyle)
         const assets = baseAssets.map(a => a.isQR ? { ...a, src: dataUrl } : a)
-        const res = await fetch('/api/designs', {
+        const res = await apiFetch('/api/designs', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: `${jobName || 'Design'} – ${qr.label}`, ownerSlug: prefill?.rowSlug || null, productId: product.id, variantId, design: { assets } }),
         })
@@ -616,7 +617,7 @@ function VariantsModal({ onClose, onGenerate }) {
   const [search, setSearch] = useState('')
 
   useEffect(() => {
-    fetch('/api/qr').then(r => r.ok ? r.json() : []).then(c => { setCodes(c); setLoading(false) }).catch(() => setLoading(false))
+    apiFetch('/api/qr').then(r => r.ok ? r.json() : []).then(c => { setCodes(c); setLoading(false) }).catch(() => setLoading(false))
     function onKey(e) { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

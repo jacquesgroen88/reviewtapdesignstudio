@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import Menu from './Menu.jsx'
+import { apiFetch } from '../lib/api.js'
 
 const STATUS_LABELS = {
   pending:          { label: 'Pending',          color: 'bg-amber-100 text-amber-700' },
@@ -42,7 +43,7 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
     setLoading(true); setError(null)
     try {
       const qs = `filter=${filter}&page=${page}&pageSize=${PAGE_SIZE}&search=${encodeURIComponent(searchTerm)}`
-      const res = await fetch(`/api/orders?${qs}`)
+      const res = await apiFetch(`/api/orders?${qs}`)
       if (!res.ok) throw new Error(await res.text())
       const data = await res.json()
       setOrders(data.orders)
@@ -66,7 +67,7 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
   async function updateStatus(rowSlug, status) {
     setUpdating(rowSlug)
     try {
-      const res = await fetch(`/api/orders/${rowSlug}/status`, {
+      const res = await apiFetch(`/api/orders/${rowSlug}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
