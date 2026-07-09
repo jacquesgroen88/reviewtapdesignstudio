@@ -71,3 +71,26 @@ export async function updateManualOrder(rowSlug, fields) {
 export async function deleteManualOrder(rowSlug) {
   await getClient().from('manual_orders').delete().eq('row_slug', rowSlug)
 }
+
+// Logo-request link: let the customer upload their own logo + review URL
+// instead of Jacques chasing them for it (Feature J, 2026-07-09).
+export async function setLogoRequestToken(rowSlug, token) {
+  const { data, error } = await getClient().from('manual_orders')
+    .update({ request_token: token, request_sent_at: new Date().toISOString() })
+    .eq('row_slug', rowSlug).select().single()
+  if (error) throw error
+  return data
+}
+
+export async function getManualOrderByToken(token) {
+  const { data } = await getClient().from('manual_orders').select('*').eq('request_token', token).maybeSingle()
+  return data
+}
+
+export async function fulfillLogoRequest(token, { logoUrl, googleReviewUrl }) {
+  const patch = { logo_url: logoUrl, request_submitted_at: new Date().toISOString() }
+  if (googleReviewUrl) patch.google_review_url = googleReviewUrl
+  const { data, error } = await getClient().from('manual_orders').update(patch).eq('request_token', token).select().single()
+  if (error) throw error
+  return data
+}

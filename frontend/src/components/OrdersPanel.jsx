@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback } from 'react'
 import Menu from './Menu.jsx'
 import { apiFetch } from '../lib/api.js'
 import { createApprovalRequest } from '../lib/approvals.js'
+import { createLogoRequest } from '../lib/logoRequest.js'
 import ApprovalShareModal from './ApprovalShareModal.jsx'
+import LogoRequestShareModal from './LogoRequestShareModal.jsx'
 import ManualOrderModal from './ManualOrderModal.jsx'
 
 const STATUS_LABELS = {
@@ -47,16 +49,55 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
   const [manualModal, setManualModal] = useState(null)   // {mode:'new'} | {mode:'edit', order} | null
   const [missingLogo, setMissingLogo] = useState([])
   const [missingLogoOpen, setMissingLogoOpen] = useState(false)
+  const [logoRequestResult, setLogoRequestResult] = useState(null)   // {result, companyName, hasPhone} → share modal
+  const [requestingLogo, setRequestingLogo] = useState(null)   // orderNumber (banner) or rowSlug (order card) in flight
   const PAGE_SIZE = 30
 
-  // Shopify orders that need a logo but never came through Formaloo or manual
-  // entry — checked once on load, not tied to the filter/search/page state.
-  useEffect(() => {
+  const refreshMissingLogo = useCallback(() => {
     apiFetch('/api/orders/missing-logo')
       .then(res => res.ok ? res.json() : { orders: [] })
       .then(data => setMissingLogo(data.orders || []))
-      .catch(() => setMissingLogo([]))
+      .catch(() => {})
   }, [])
+
+  // Shopify orders that need a logo but never came through Formaloo or manual
+  // entry — checked once on load, not tied to the filter/search/page state.
+  useEffect(() => { refreshMissingLogo() }, [refreshMissingLogo])
+
+  // Banner row → one click creates the manual order (company name is a
+  // placeholder — we don't have it without customer PII from Shopify) and
+  // the logo-request link in the same motion. No known phone yet, so the
+  // share modal falls back to copy-link only.
+  async function requestLogoFromBanner(o) {
+    setRequestingLogo(o.orderNumber)
+    setError(null)
+    try {
+      const createRes = await apiFetch('/api/orders/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyName: `Order #${o.orderNumber}`, orderNumber: o.orderNumber, orderedStand: o.requiresStand, orderedCard: o.requiresCard }),
+      })
+      if (!createRes.ok) throw new Error((await createRes.json().catch(() => ({}))).error || 'could not create the order')
+      const manual = await createRes.json()
+      const result = await createLogoRequest(manual.rowSlug)
+      setLogoRequestResult({ result, companyName: manual.companyName, hasPhone: false })
+      load(); refreshMissingLogo()
+    } catch (err) {
+      setError(`Logo request failed: ${err.message || 'network error'}`)
+    } finally { setRequestingLogo(null) }
+  }
+
+  // Order-card version — the order already exists, so just (re)generate its link.
+  async function requestLogoForOrder(order) {
+    setRequestingLogo(order.rowSlug)
+    setError(null)
+    try {
+      const result = await createLogoRequest(order.rowSlug)
+      setLogoRequestResult({ result, companyName: order.companyName, hasPhone: !!(order.whatsapp) })
+    } catch (err) {
+      setError(`Logo request failed: ${err.message || 'network error'}`)
+    } finally { setRequestingLogo(null) }
+  }
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
@@ -172,7 +213,16 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
         <ManualOrderModal
           initial={manualModal.order || null}
           onClose={() => setManualModal(null)}
-          onSaved={() => { setManualModal(null); load(); apiFetch('/api/orders/missing-logo').then(r => r.ok ? r.json() : { orders: [] }).then(d => setMissingLogo(d.orders || [])).catch(() => {}) }}
+          onSaved={() => { setManualModal(null); load(); refreshMissingLogo() }}
+        />
+      )}
+
+      {logoRequestResult && (
+        <LogoRequestShareModal
+          result={logoRequestResult.result}
+          companyName={logoRequestResult.companyName}
+          hasPhone={logoRequestResult.hasPhone}
+          onClose={() => setLogoRequestResult(null)}
         />
       )}
 
@@ -212,7 +262,15 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
                   <span className="text-xs text-gray-400">× {o.quantity}</span>
                   <span className="flex-1" />
                   <button
-                    className="text-xs font-medium text-orange-600 hover:text-orange-700"
+                    className="text-xs font-medium text-orange-600 hover:text-orange-700 disabled:opacity-50"
+                    onClick={() => requestLogoFromBanner(o)}
+                    disabled={requestingLogo === o.orderNumber}
+                    title="Creates the order and gives you a link the customer can upload their logo through"
+                  >
+                    {requestingLogo === o.orderNumber ? 'Creating…' : 'Request logo'}
+                  </button>
+                  <button
+                    className="text-xs font-medium text-gray-400 hover:text-gray-600"
                     onClick={() => setManualModal({ mode: 'new', order: { orderNumber: o.orderNumber, orderedStand: o.requiresStand, orderedCard: o.requiresCard } })}
                   >
                     + Log manually
@@ -276,6 +334,8 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
                 isSendingApproval={sendingApproval === order.rowSlug}
                 onEditManual={() => setManualModal({ mode: 'edit', order })}
                 onDeleteManual={() => deleteManualOrder(order)}
+                onRequestLogo={() => requestLogoForOrder(order)}
+                isRequestingLogo={requestingLogo === order.rowSlug}
               />
             ))}
           </div>
@@ -316,11 +376,12 @@ function ApprovalChip({ approval }) {
   return <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full shrink-0 ${cls}`} title={title}>{text}</span>
 }
 
-function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdating, onSendApproval, isSendingApproval, onEditManual, onDeleteManual }) {
+function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdating, onSendApproval, isSendingApproval, onEditManual, onDeleteManual, onRequestLogo, isRequestingLogo }) {
   const [expanded, setExpanded] = useState(false)
   const status = STATUS_LABELS[order.status] ?? STATUS_LABELS.pending
   const canDesign = order.orderedStand || order.orderedCard
   const isManual = order.source === 'manual'
+  const needsLogo = isManual && !order.logoUrl
 
   return (
     <div className={`card p-4 space-y-3 ${order.status === 'done' ? 'border-brand-100' : ''}`}>
@@ -399,7 +460,13 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
 
       {/* Actions */}
       <div className="flex gap-2">
-        {canDesign && (
+        {needsLogo && (
+          <button className="btn-primary flex-1 text-sm py-2 !bg-orange-500 hover:!bg-orange-600" onClick={onRequestLogo} disabled={isRequestingLogo}
+            title="Get a link the customer can upload their logo through">
+            {isRequestingLogo ? 'Creating…' : 'Request logo'}
+          </button>
+        )}
+        {canDesign && !needsLogo && (
           <button className="btn-primary flex-1 text-sm py-2" onClick={onNewDesign}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>

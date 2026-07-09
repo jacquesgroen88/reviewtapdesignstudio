@@ -299,6 +299,34 @@ to Formaloo/manual orders by `order_number`, and:
 Dev Dashboard app: `dev.shopify.com/dashboard/155113118/apps/395276976129`. Only Level-1
 order data is used (line items/quantities/fulfillment status) — that tier is always
 available on every Shopify plan, so no protected-customer-data review was needed.
+Getting customer name/email/phone (Level 2) would need `read_customers` + a protected-data
+grant — verified live that this app's Dev Dashboard has no UI to request it at all (known
+Shopify platform bug, not fixable from our side): dev.shopify.com/dashboard/.../settings has
+no such option, and partners.shopify.com doesn't even recognize this app (404s).
+
+---
+
+## Logo-request link (Feature J, added 2026-07-09)
+Lets the customer upload their own logo instead of Jacques chasing them — same
+server-rendered-public-page pattern as the approval flow (Feature F), reusing
+`manual_orders` as the anchor row rather than a new table.
+- `manual_orders` gained `request_token`, `request_sent_at`, `request_submitted_at`.
+- `services/manualOrders.js`: `setLogoRequestToken`, `getManualOrderByToken`, `fulfillLogoRequest`.
+- `POST /api/logo-requests` (authed) `{rowSlug}` → generates/returns `{token, url, waUrl}`
+  (`routes/logoRequests.js`). wa.me link only built if the order already has a phone/whatsapp.
+- Public page: `GET /logo-request/:token` + `POST /logo-request/:token/submit` — standalone
+  Netlify function (`netlify/functions/logo-request.js`, mirrors `approve.js`) in prod, Express
+  router (`routes/logoRequestPublic.js`, mounted before `requireAuth`) in local dev. Renders via
+  `services/logoRequestPage.js` (plain HTML + inline script, FileReader→dataURL, no SPA).
+- Frontend: `lib/logoRequest.js` + `LogoRequestShareModal.jsx` (copy-link always; WhatsApp
+  button only when a phone is known).
+- Two entry points in `OrdersPanel.jsx`: the missing-logo banner's "Request logo" button
+  creates the manual order on the fly (`company_name` defaults to `Order #<number>` — rename
+  later once the customer replies, since Shopify PII isn't available to prefill it) then
+  requests a token in one motion; an order card with `isManual && !logoUrl` shows the same
+  action once the order already exists.
+- Verified full round-trip locally via curl (token → page render → submit → storage upload →
+  `manual_orders` row updated → page shows "thanks" state) before deploying.
 
 ---
 

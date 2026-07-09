@@ -41,6 +41,13 @@
   status = 200
   force  = true
 
+# Client logo-request page → dedicated function (public, server-rendered)
+[[redirects]]
+  from   = "/logo-request/*"
+  to     = "/.netlify/functions/logo-request"
+  status = 200
+  force  = true
+
 # SPA fallback
 [[redirects]]
   from   = "/*"
