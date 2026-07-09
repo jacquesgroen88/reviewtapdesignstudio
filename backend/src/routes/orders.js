@@ -104,9 +104,13 @@ router.get('/missing-logo', async (req, res) => {
       fetchOrders({ page: 1, pageSize: 500 }),
       listManualOrders().catch(() => []),
     ])
+    // Normalize away a leading '#' — Formaloo submissions sometimes record it
+    // (e.g. "#1817"), Shopify's order.name always has it, shopifyMap's keys never
+    // do. Without stripping it here, those orders looked "missing" even though
+    // they already have a Formaloo submission (found while investigating #1817).
     const knownNumbers = new Set([
-      ...formalooAll.orders.map(o => String(o.orderNumber || '').trim()),
-      ...manualRaw.map(m => String(m.order_number || '').trim()),
+      ...formalooAll.orders.map(o => String(o.orderNumber || '').trim().replace(/^#/, '')),
+      ...manualRaw.map(m => String(m.order_number || '').trim().replace(/^#/, '')),
     ])
     // Unpaid orders (pending, voided, etc.) aren't confirmed sales yet — chasing
     // a logo for one is premature, so only paid orders are worth surfacing here.
