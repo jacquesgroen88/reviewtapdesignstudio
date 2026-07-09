@@ -156,7 +156,7 @@ export default function ProductPicker({ onStart, prefill, onCancel }) {
 }
 
 function ProductIcon({ id, selected }) {
-  const color = selected ? '#0d9276' : '#d1d5db'
+  const color = selected ? '#ea580c' : '#d1d5db'
   if (id === 'stand') return (
     <svg width="28" height="32" viewBox="0 0 28 32" fill="none">
       <rect x="2" y="1" width="24" height="24" rx="2" stroke={color} strokeWidth="2"/>

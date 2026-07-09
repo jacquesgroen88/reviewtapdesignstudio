@@ -39,6 +39,31 @@ function toOrderShape(m) {
   }
 }
 
+// Filter tabs map to real order_status values, except 'awaiting_logo' which is
+// about the order having no logo file at all (independent of status) and
+// 'all'/'' which means no filter. 'approved' reads as 'pending_print' — that's
+// the status set when a client approves via the approval link; the UI label
+// is friendlier than the internal print-queue name.
+const STATUS_FILTER_MAP = {
+  ready: 'ready',
+  pending_approval: 'pending_approval',
+  approved: 'pending_print',
+  done: 'done',
+}
+
+function matchesFilter(order, filter) {
+  if (!filter || filter === 'all') return true
+  if (filter === 'awaiting_logo') return !order.logoUrl
+  const target = STATUS_FILTER_MAP[filter]
+  return target ? order.status === target : true
+}
+
+function matchesSearch(order, search) {
+  if (!search) return true
+  return (order.companyName || '').toLowerCase().includes(search) ||
+    String(order.orderNumber || '').toLowerCase().includes(search)
+}
+
 router.get('/', async (req, res) => {
   try {
     const page     = parseInt(req.query.page)     || 1
@@ -46,10 +71,14 @@ router.get('/', async (req, res) => {
     const filter   = req.query.filter             || 'all'
     const search   = (req.query.search || '').trim().toLowerCase()
 
-    // When searching, pull a large batch so we match across all submissions
+    // A specific status/awaiting-logo filter (or a search) needs to scan
+    // beyond one page's chronological window of Formaloo submissions — pull a
+    // large batch and filter in-memory instead of relying on Formaloo's own
+    // pagination, same as search already did.
+    const needsFullScan  = filter !== 'all' || !!search
     const onlyDesignNeeded = filter !== 'all'
-    const fetchPage     = search ? 1   : page
-    const fetchPageSize = search ? 300 : pageSize
+    const fetchPage     = needsFullScan ? 1   : page
+    const fetchPageSize = needsFullScan ? 500 : pageSize
     const { orders, count } = await fetchOrders({ page: fetchPage, pageSize: fetchPageSize, onlyDesignNeeded })
 
     const [statuses, designsMap, names, approvalMap, manualRaw, shopifyMap] = await Promise.all([
@@ -62,31 +91,25 @@ router.get('/', async (req, res) => {
     const ctx = { statusMap, designsMap, names, approvalMap, shopifyMap }
 
     const enriched = orders.map(order => enrichOrder(order, ctx))
-    let result
-    if (filter === 'done')              result = enriched.filter(o => o.status === 'done')
-    else if (filter === 'needs_design') result = enriched.filter(o => !['done', 'skipped'].includes(o.status))
-    else                                result = enriched   // 'all'
-    if (search) {
-      result = result.filter(o =>
-        (o.companyName || '').toLowerCase().includes(search) ||
-        String(o.orderNumber || '').toLowerCase().includes(search))
-    }
+      .filter(o => matchesFilter(o, filter)).filter(o => matchesSearch(o, search))
 
     // Manually-entered orders aren't part of Formaloo's server-side pagination
     // (there are typically only a handful), so they're shown in full — on
-    // page 1 of a normal browse, and always when searching — rather than
-    // sliced into Formaloo's page windows. The total count includes them.
+    // page 1 of a normal browse, and always when searching/filtering — rather
+    // than sliced into Formaloo's page windows.
     let manualResult = manualRaw.map(toOrderShape).map(o => enrichOrder(o, ctx))
-    if (filter === 'done')              manualResult = manualResult.filter(o => o.status === 'done')
-    else if (filter === 'needs_design') manualResult = manualResult.filter(o => !['done', 'skipped'].includes(o.status))
-    if (search) {
-      manualResult = manualResult.filter(o =>
-        (o.companyName || '').toLowerCase().includes(search) ||
-        String(o.orderNumber || '').toLowerCase().includes(search))
-    }
-    if (search || fetchPage === 1) result = [...manualResult, ...result]
+      .filter(o => matchesFilter(o, filter)).filter(o => matchesSearch(o, search))
 
-    res.json({ orders: result, count: (search ? result.length : count + manualResult.length), page: fetchPage, pageSize: fetchPageSize })
+    let result, total
+    if (needsFullScan) {
+      result = [...manualResult, ...enriched]
+      total = result.length
+    } else {
+      result = fetchPage === 1 ? [...manualResult, ...enriched] : enriched
+      total = count + manualResult.length
+    }
+
+    res.json({ orders: result, count: total, page: fetchPage, pageSize: fetchPageSize })
   } catch (err) {
     console.error('Orders fetch error:', err.message)
     res.status(500).json({ error: err.message })

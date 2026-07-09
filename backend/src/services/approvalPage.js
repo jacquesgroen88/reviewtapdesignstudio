@@ -51,6 +51,7 @@ ${firstMockup ? `<meta property="og:image" content="${esc(firstMockup)}">` : ''}
   body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: #f6f7f9; color: #14202e; }
   .wrap { max-width: 560px; margin: 0 auto; padding: 20px 16px 60px; }
   header { text-align: center; padding: 18px 0 6px; }
+  header .logo { width: 40px; height: 40px; object-fit: contain; margin-bottom: 6px; }
   header .brand { font-weight: 800; font-size: 20px; letter-spacing: -0.3px; }
   header .brand span { color: #f97316; }
   header p { color: #5b6b7c; font-size: 14px; margin-top: 6px; }
@@ -73,6 +74,7 @@ ${firstMockup ? `<meta property="og:image" content="${esc(firstMockup)}">` : ''}
 </head><body>
 <div class="wrap">
   <header>
+    <img src="/reviewtap-icon.png" alt="ReviewTap" class="logo">
     <div class="brand">Review<span>Tap</span></div>
     <p>Hi ${esc(approval.client_name || 'there')}${approval.order_number ? ` &mdash; order #${esc(approval.order_number)}` : ''}!<br>
     ${allDone ? 'Thanks — we have your answer for every design.' : `Please review your design${items.length > 1 ? 's' : ''} below.`}</p>

@@ -20,6 +20,7 @@ export function renderLogoRequestPage(order, publicBase) {
   body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: #f6f7f9; color: #14202e; }
   .wrap { max-width: 480px; margin: 0 auto; padding: 20px 16px 60px; }
   header { text-align: center; padding: 18px 0 6px; }
+  header .logo { width: 40px; height: 40px; object-fit: contain; margin-bottom: 6px; }
   header .brand { font-weight: 800; font-size: 20px; letter-spacing: -0.3px; }
   header .brand span { color: #f97316; }
   header p { color: #5b6b7c; font-size: 14px; margin-top: 6px; }
@@ -40,6 +41,7 @@ export function renderLogoRequestPage(order, publicBase) {
 </head><body>
 <div class="wrap">
   <header>
+    <img src="/reviewtap-icon.png" alt="ReviewTap" class="logo">
     <div class="brand">Review<span>Tap</span></div>
     <p>Hi ${esc(order.company_name || 'there')}${order.order_number ? ` &mdash; order #${esc(order.order_number)}` : ''}!<br>
     We just need your logo to get your design started.</p>
@@ -57,8 +59,8 @@ export function renderLogoRequestPage(order, publicBase) {
       <input type="file" id="file" accept="image/png,image/jpeg,image/webp,application/pdf" hidden>
     </div>
     <div class="field">
-      <label>Business name (exactly as it appears on Google)</label>
-      <input type="text" id="businessName" placeholder="e.g. Ourief Wedding Venue" value="${order.company_name && !/^Order #/.test(order.company_name) ? esc(order.company_name) : ''}">
+      <label>Business name (exactly as it appears on Google) — or your Google review link</label>
+      <input type="text" id="nameOrLink" placeholder="e.g. Ourief Wedding Venue, or https://g.page/r/..." value="${order.company_name && !/^Order #/.test(order.company_name) ? esc(order.company_name) : ''}">
     </div>
     <button class="btn" id="submitBtn" onclick="submit()">Send my logo</button>
     <p class="err" id="err" hidden></p>
@@ -90,15 +92,15 @@ if (fileInput) {
 async function submit() {
   const err = document.getElementById('err')
   err.hidden = true
-  const businessName = document.getElementById('businessName').value.trim()
+  const nameOrLink = document.getElementById('nameOrLink').value.trim()
   if (!fileDataUrl) { err.textContent = 'Please choose a logo file first.'; err.hidden = false; return }
-  if (!businessName) { err.textContent = 'Please enter your business name as it appears on Google.'; err.hidden = false; return }
+  if (!nameOrLink) { err.textContent = 'Please enter your business name or paste your Google review link.'; err.hidden = false; return }
   const btn = document.getElementById('submitBtn')
   btn.disabled = true; btn.textContent = 'Sending…'
   try {
     const res = await fetch('${publicBase}/logo-request/${esc(order.request_token)}/submit', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ logo: fileDataUrl, businessName }),
+      body: JSON.stringify({ logo: fileDataUrl, nameOrLink }),
     })
     if (!res.ok) throw new Error()
     location.reload()

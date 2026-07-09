@@ -890,7 +890,7 @@ function VariantsModal({ onClose, onGenerate }) {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-const HANDLE_STYLE = { cornerSize: 10, transparentCorners: false, cornerColor: '#14b893', borderColor: '#14b893', borderScaleFactor: 1.5 }
+const HANDLE_STYLE = { cornerSize: 10, transparentCorners: false, cornerColor: '#f97316', borderColor: '#f97316', borderScaleFactor: 1.5 }
 
 function drawGuides(canvas, layout, safeMargin) {
   layout.forEach(({ face, x }) => {

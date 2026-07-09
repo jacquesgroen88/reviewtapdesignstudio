@@ -88,9 +88,14 @@ export async function getManualOrderByToken(token) {
   return data
 }
 
-export async function fulfillLogoRequest(token, { logoUrl, businessName }) {
+// The public form takes ONE flexible field — a business name as it appears on
+// Google, or a pasted Google review link — since customers have whichever one
+// handy. Anything URL-shaped goes to google_review_url; otherwise company_name.
+export async function fulfillLogoRequest(token, { logoUrl, nameOrLink }) {
   const patch = { logo_url: logoUrl, request_submitted_at: new Date().toISOString() }
-  if (businessName) patch.company_name = businessName
+  const trimmed = (nameOrLink || '').trim()
+  if (/^https?:\/\//i.test(trimmed)) patch.google_review_url = trimmed
+  else if (trimmed) patch.company_name = trimmed
   const { data, error } = await getClient().from('manual_orders').update(patch).eq('request_token', token).select().single()
   if (error) throw error
   return data

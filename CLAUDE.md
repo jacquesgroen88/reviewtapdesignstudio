@@ -339,9 +339,44 @@ server-rendered-public-page pattern as the approval flow (Feature F), reusing
   creates the manual order on the fly (`company_name` defaults to `Order #<number>` — rename
   later once the customer replies, since Shopify PII isn't available to prefill it) then
   requests a token in one motion; an order card with `isManual && !logoUrl` shows the same
-  action once the order already exists.
+  action once the order already exists, plus a direct WhatsApp icon-button (skips the share
+  modal, opens `wa.me` immediately) when the order already has a phone/whatsapp on file.
+- Public form asks ONE flexible field — business name as it appears on Google, OR a pasted
+  Google review link (not the review URL specifically; Jacques doesn't need that, just wants
+  the name right). `fulfillLogoRequest` detects which: `https?://` → `google_review_url`,
+  otherwise → `company_name` (auto-corrects the `Order #<n>` placeholder from the banner path).
 - Verified full round-trip locally via curl (token → page render → submit → storage upload →
   `manual_orders` row updated → page shows "thanks" state) before deploying.
+
+---
+
+## Orders filter tabs (reworked 2026-07-09)
+Replaced the old 3-tab set (`needs_design`/`all`/`done`) with 6: **All orders, Awaiting Logo,
+Ready, Pending Approval, Approved, Done**. `Approved` reads the `pending_print` status value
+(set when a client approves via the approval link) — same internal enum, friendlier label
+everywhere it's shown (`STATUS_LABELS`/`STATUS_OPTIONS` in `OrdersPanel.jsx` say "Approved" now,
+not "Pending Print"). `Awaiting Logo` is independent of status — `!order.logoUrl` — and only
+ever matches manual orders (Formaloo submissions always include a logo).
+Backend (`routes/orders.js`): any filter other than `'all'` (or an active search) triggers a
+full in-memory scan — pulls a large Formaloo batch (500) + all manual orders, filters both by
+`matchesFilter`/`matchesSearch`, same approach search already used. `'all'` with no search keeps
+the old paginated path. Verified against real data before deploying: 52 done / 6 ready / 8
+pending_approval / 4 pending_print / 11 awaiting_logo, matching what showed up in each tab.
+
+---
+
+## Branding fix (2026-07-09)
+The studio was using a placeholder teal-green icon/palette that was never the real ReviewTap
+brand — found the actual logo at `Reviewtap/Reviewtap/website-redesign/assets/reviewtap-logo.png`
+(hexagon icon in orange/green/blue + "NFC" wifi mark, "Review" in orange + "Tap" in black).
+Cropped to an icon-only PNG (`frontend/public/reviewtap-icon.png`, via PIL bbox-trim) since the
+studio always shows "ReviewTap Studio" as separate text next to the icon — using the full
+logo-with-wordmark image would have duplicated the text. Used as favicon + header logo + on the
+public approval/logo-request pages. Tailwind's `brand` color scale (`tailwind.config.js`) changed
+from an arbitrary teal-green to ReviewTap's real orange (`#f97316` = `brand-500`), matching what
+the public-facing pages already used. Two hardcoded hex leftovers fixed too (`DesignCanvas.jsx`
+canvas handle color, `ProductPicker.jsx` selection color) — everything else was already routed
+through `bg-brand-*`/`text-brand-*` Tailwind classes and recolored automatically.
 
 ---
 

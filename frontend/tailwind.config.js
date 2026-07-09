@@ -4,18 +4,20 @@ export default {
   theme: {
     extend: {
       colors: {
+        // ReviewTap's real brand orange (the "Review" wordmark / hexagon-icon
+        // orange, #f97316) — replaces an earlier unrelated teal-green placeholder.
         brand: {
-          50:  '#f0fdf9',
-          100: '#ccfbee',
-          200: '#99f6dd',
-          300: '#5fecc7',
-          400: '#2dd8ac',
-          500: '#14b893',
-          600: '#0d9276',
-          700: '#0e7560',
-          800: '#0f5e4e',
-          900: '#104d41',
-          950: '#042e28',
+          50:  '#fff7ed',
+          100: '#ffedd5',
+          200: '#fed7aa',
+          300: '#fdba74',
+          400: '#fb923c',
+          500: '#f97316',
+          600: '#ea580c',
+          700: '#c2410c',
+          800: '#9a3412',
+          900: '#7c2d12',
+          950: '#431407',
         }
       },
       fontFamily: {

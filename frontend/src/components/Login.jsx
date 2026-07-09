@@ -42,12 +42,8 @@ export default function Login() {
     <div className="flex-1 flex items-center justify-center p-6">
       <form onSubmit={signIn} className="card w-full max-w-sm p-8 space-y-4">
         <div className="text-center">
-          <div className="w-10 h-10 bg-brand-600 rounded-xl flex items-center justify-center mx-auto mb-3">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
-            </svg>
-          </div>
-          <h1 className="text-lg font-bold text-gray-900">ReviewTap Studio</h1>
+          <img src="/reviewtap-icon.png" alt="ReviewTap" className="w-12 h-12 object-contain mx-auto mb-3" />
+          <h1 className="text-lg font-bold text-gray-900">Review<span className="text-brand-500">Tap</span> Studio</h1>
           <p className="text-sm text-gray-400 mt-0.5">Sign in to continue</p>
         </div>
 

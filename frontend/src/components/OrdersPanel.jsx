@@ -11,7 +11,7 @@ const STATUS_LABELS = {
   pending:          { label: 'Pending',          color: 'bg-amber-100 text-amber-700' },
   ready:            { label: 'Ready',             color: 'bg-teal-100 text-teal-700' },
   pending_approval: { label: 'Pending Approval',  color: 'bg-blue-100 text-blue-700' },
-  pending_print:    { label: 'Pending Print',     color: 'bg-purple-100 text-purple-700' },
+  pending_print:    { label: 'Approved',          color: 'bg-purple-100 text-purple-700' },
   done:             { label: 'Done',              color: 'bg-brand-100 text-brand-700' },
   skipped:          { label: 'Skipped',           color: 'bg-gray-100 text-gray-500' },
   not_needed:       { label: 'No design',         color: 'bg-gray-100 text-gray-400' },
@@ -23,22 +23,25 @@ const STATUS_OPTIONS = [
   { value: 'pending',          label: 'Pending' },
   { value: 'ready',            label: 'Ready' },
   { value: 'pending_approval', label: 'Pending Approval' },
-  { value: 'pending_print',    label: 'Pending Print' },
+  { value: 'pending_print',    label: 'Approved' },
   { value: 'done',             label: 'Done' },
   { value: 'skipped',          label: 'Skip' },
 ]
 
 const FILTER_TABS = [
-  { id: 'needs_design', label: 'Needs designing' },
-  { id: 'all',          label: 'All orders' },
-  { id: 'done',         label: 'Done' },
+  { id: 'all',              label: 'All orders' },
+  { id: 'awaiting_logo',    label: 'Awaiting Logo' },
+  { id: 'ready',            label: 'Ready' },
+  { id: 'pending_approval', label: 'Pending Approval' },
+  { id: 'approved',         label: 'Approved' },
+  { id: 'done',             label: 'Done' },
 ]
 
 export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
   const [orders,   setOrders]   = useState([])
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState(null)
-  const [filter,   setFilter]   = useState('needs_design')
+  const [filter,   setFilter]   = useState('all')
   const [page,     setPage]     = useState(1)
   const [total,    setTotal]    = useState(0)
   const [updating, setUpdating] = useState(null)   // rowSlug being status-updated
@@ -94,6 +97,21 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
     try {
       const result = await createLogoRequest(order.rowSlug)
       setLogoRequestResult({ result, companyName: order.companyName, hasPhone: !!(order.whatsapp) })
+    } catch (err) {
+      setError(`Logo request failed: ${err.message || 'network error'}`)
+    } finally { setRequestingLogo(null) }
+  }
+
+  // Skips the share modal entirely — generates the link and opens WhatsApp
+  // straight away with the contact and message prefilled. Only shown when a
+  // phone/whatsapp number is already on file for the order.
+  async function requestLogoViaWhatsapp(order) {
+    setRequestingLogo(order.rowSlug)
+    setError(null)
+    try {
+      const result = await createLogoRequest(order.rowSlug)
+      window.open(result.waUrl, '_blank', 'noopener')
+      refreshMissingLogo()
     } catch (err) {
       setError(`Logo request failed: ${err.message || 'network error'}`)
     } finally { setRequestingLogo(null) }
@@ -335,6 +353,7 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
                 onEditManual={() => setManualModal({ mode: 'edit', order })}
                 onDeleteManual={() => deleteManualOrder(order)}
                 onRequestLogo={() => requestLogoForOrder(order)}
+                onRequestLogoWhatsapp={() => requestLogoViaWhatsapp(order)}
                 isRequestingLogo={requestingLogo === order.rowSlug}
               />
             ))}
@@ -376,7 +395,7 @@ function ApprovalChip({ approval }) {
   return <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full shrink-0 ${cls}`} title={title}>{text}</span>
 }
 
-function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdating, onSendApproval, isSendingApproval, onEditManual, onDeleteManual, onRequestLogo, isRequestingLogo }) {
+function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdating, onSendApproval, isSendingApproval, onEditManual, onDeleteManual, onRequestLogo, onRequestLogoWhatsapp, isRequestingLogo }) {
   const [expanded, setExpanded] = useState(false)
   const status = STATUS_LABELS[order.status] ?? STATUS_LABELS.pending
   const canDesign = order.orderedStand || order.orderedCard
@@ -464,6 +483,12 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
           <button className="btn-primary flex-1 text-sm py-2 !bg-orange-500 hover:!bg-orange-600" onClick={onRequestLogo} disabled={isRequestingLogo}
             title="Get a link the customer can upload their logo through">
             {isRequestingLogo ? 'Creating…' : 'Request logo'}
+          </button>
+        )}
+        {needsLogo && order.whatsapp && (
+          <button className="btn-primary shrink-0 text-sm py-2 px-3 !bg-[#25D366] hover:!bg-[#1fb958]" onClick={onRequestLogoWhatsapp} disabled={isRequestingLogo}
+            title="Open WhatsApp with the request link already typed in for this contact">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.52.149-.174.198-.298.297-.497.1-.198.05-.371-.025-.52-.074-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z"/></svg>
           </button>
         )}
         {canDesign && !needsLogo && (
