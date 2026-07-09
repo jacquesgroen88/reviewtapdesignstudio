@@ -19,7 +19,8 @@ function buildWaUrl({ whatsapp, companyName, orderNumber, url }) {
 // body: { rowSlug }
 router.post('/', async (req, res) => {
   try {
-    const { rowSlug } = req.body
+    const { rowSlug } = req.body || {}
+    if (!rowSlug) return res.status(400).json({ error: 'rowSlug required' })
     const order = await getManualOrder(rowSlug)
     if (!order) return res.status(404).json({ error: 'Order not found' })
 
