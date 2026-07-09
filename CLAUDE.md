@@ -257,6 +257,21 @@ button becomes **Edit** and the order stays fully reusable.
     also un-broke the existing "middle-mouse to pan" feature, which had been dead code the
     whole time for the same reason. Both flags are now set in DesignCanvas's canvas init.
 
+14. **`netlify/functions/api.js` is a SEPARATE, hand-duplicated Express app from
+    `backend/src/index.js` — NOT imported from it.** Every new authed router mounted in
+    `index.js` (`app.use('/api/whatever', whateverRouter)`) must be added to `api.js` too, or
+    it silently works in local dev and 404s in production. The trap: an unauthenticated
+    curl/test against the missing route still looks "correct" (401 from `requireAuth`, which
+    matches on the `/api` prefix and fires before Express ever looks for the specific
+    sub-route) — only an authenticated request reveals the gap, since it's the one that gets
+    past `requireAuth` and hits Express's own native 404 ("Cannot POST ...") for the route
+    that was never mounted here. Cost ~45 minutes to find (2026-07-09, logo-requests route)
+    because every other diagnostic — deploy commit hash, function logs via Netlify's public
+    API, stale-Lambda-container theory, forcing a fresh deploy — checked out fine, since the
+    deployed code genuinely WAS current; it just never had this route in the first place.
+    **When adding any new `/api/*` router, update both files or grep for the router name in
+    both before considering the feature done.**
+
 ---
 
 ## Auth (added 2026-07-08, Phase 2)
