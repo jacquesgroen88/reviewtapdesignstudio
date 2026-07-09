@@ -17,10 +17,10 @@ export async function handler(event) {
     try {
       const order = await getManualOrderByToken(token)
       if (!order) return json(404, { error: 'Not found' })
-      const { logo, googleReviewUrl } = JSON.parse(event.body || '{}')
+      const { logo, businessName } = JSON.parse(event.body || '{}')
       if (!logo) return json(400, { error: 'logo required' })
       const logoUrl = await uploadLogo(order.row_slug, logo)
-      await fulfillLogoRequest(token, { logoUrl, googleReviewUrl })
+      await fulfillLogoRequest(token, { logoUrl, businessName })
       return json(200, { ok: true })
     } catch (err) {
       return json(400, { error: err.message })

@@ -57,8 +57,8 @@ export function renderLogoRequestPage(order, publicBase) {
       <input type="file" id="file" accept="image/png,image/jpeg,image/webp,application/pdf" hidden>
     </div>
     <div class="field">
-      <label>Google review link <span style="font-weight:400;color:#8a97a5">(optional if we already have it)</span></label>
-      <input type="url" id="reviewUrl" placeholder="https://g.page/r/...">
+      <label>Business name (exactly as it appears on Google)</label>
+      <input type="text" id="businessName" placeholder="e.g. Ourief Wedding Venue" value="${order.company_name && !/^Order #/.test(order.company_name) ? esc(order.company_name) : ''}">
     </div>
     <button class="btn" id="submitBtn" onclick="submit()">Send my logo</button>
     <p class="err" id="err" hidden></p>
@@ -90,13 +90,15 @@ if (fileInput) {
 async function submit() {
   const err = document.getElementById('err')
   err.hidden = true
+  const businessName = document.getElementById('businessName').value.trim()
   if (!fileDataUrl) { err.textContent = 'Please choose a logo file first.'; err.hidden = false; return }
+  if (!businessName) { err.textContent = 'Please enter your business name as it appears on Google.'; err.hidden = false; return }
   const btn = document.getElementById('submitBtn')
   btn.disabled = true; btn.textContent = 'Sending…'
   try {
     const res = await fetch('${publicBase}/logo-request/${esc(order.request_token)}/submit', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ logo: fileDataUrl, googleReviewUrl: document.getElementById('reviewUrl').value.trim() }),
+      body: JSON.stringify({ logo: fileDataUrl, businessName }),
     })
     if (!res.ok) throw new Error()
     location.reload()

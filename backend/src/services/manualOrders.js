@@ -72,8 +72,9 @@ export async function deleteManualOrder(rowSlug) {
   await getClient().from('manual_orders').delete().eq('row_slug', rowSlug)
 }
 
-// Logo-request link: let the customer upload their own logo + review URL
-// instead of Jacques chasing them for it (Feature J, 2026-07-09).
+// Logo-request link: let the customer upload their own logo + confirm the
+// exact business name (as it appears on Google) instead of Jacques chasing
+// them for it, or guessing the name from an order confirmation (Feature J).
 export async function setLogoRequestToken(rowSlug, token) {
   const { data, error } = await getClient().from('manual_orders')
     .update({ request_token: token, request_sent_at: new Date().toISOString() })
@@ -87,9 +88,9 @@ export async function getManualOrderByToken(token) {
   return data
 }
 
-export async function fulfillLogoRequest(token, { logoUrl, googleReviewUrl }) {
+export async function fulfillLogoRequest(token, { logoUrl, businessName }) {
   const patch = { logo_url: logoUrl, request_submitted_at: new Date().toISOString() }
-  if (googleReviewUrl) patch.google_review_url = googleReviewUrl
+  if (businessName) patch.company_name = businessName
   const { data, error } = await getClient().from('manual_orders').update(patch).eq('request_token', token).select().single()
   if (error) throw error
   return data

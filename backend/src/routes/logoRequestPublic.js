@@ -26,10 +26,10 @@ router.post('/:token/submit', async (req, res) => {
   try {
     const order = await getManualOrderByToken(req.params.token)
     if (!order) return res.status(404).json({ error: 'Not found' })
-    const { logo, googleReviewUrl } = req.body || {}
+    const { logo, businessName } = req.body || {}
     if (!logo) return res.status(400).json({ error: 'logo required' })
     const logoUrl = await uploadLogo(order.row_slug, logo)
-    await fulfillLogoRequest(req.params.token, { logoUrl, googleReviewUrl })
+    await fulfillLogoRequest(req.params.token, { logoUrl, businessName })
     res.json({ ok: true })
   } catch (err) {
     res.status(400).json({ error: err.message })
