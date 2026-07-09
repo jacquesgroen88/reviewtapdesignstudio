@@ -6,6 +6,7 @@ import { approvalSummaryByDesign } from '../services/approvals.js'
 import {
   listManualOrders, getManualOrder, createManualOrder, updateManualOrder, deleteManualOrder, uploadLogo,
 } from '../services/manualOrders.js'
+import { fetchOpenShopifyOrders } from '../services/shopify.js'
 
 const router = express.Router()
 
@@ -13,7 +14,7 @@ const VALID_STATUSES = ['pending', 'ready', 'pending_approval', 'pending_print',
 
 // Shared enrichment for BOTH Formaloo and manually-entered orders — one place
 // joins status/designs/approvals so the two sources behave identically.
-function enrichOrder(order, { statusMap, designsMap, names, approvalMap }) {
+function enrichOrder(order, { statusMap, designsMap, names, approvalMap, shopifyMap = {} }) {
   return {
     ...order,
     status: statusMap[order.rowSlug]?.status ?? (order.orderedStand || order.orderedCard ? 'pending' : 'not_needed'),
@@ -24,6 +25,7 @@ function enrichOrder(order, { statusMap, designsMap, names, approvalMap }) {
       approval: approvalMap[d.id] || null,
     })),
     hasDesign: !!designsMap[order.rowSlug]?.length,
+    shopify: shopifyMap[String(order.orderNumber || '').replace(/^#/, '')] || null,
   }
 }
 
@@ -50,13 +52,14 @@ router.get('/', async (req, res) => {
     const fetchPageSize = search ? 300 : pageSize
     const { orders, count } = await fetchOrders({ page: fetchPage, pageSize: fetchPageSize, onlyDesignNeeded })
 
-    const [statuses, designsMap, names, approvalMap, manualRaw] = await Promise.all([
+    const [statuses, designsMap, names, approvalMap, manualRaw, shopifyMap] = await Promise.all([
       getAllOrderStatuses(), listDesignsByOwner(), getProfileNames(),
       approvalSummaryByDesign().catch(() => ({})),
       listManualOrders().catch(() => []),
+      fetchOpenShopifyOrders().catch(err => { console.error('Shopify sync error:', err.message); return {} }),
     ])
     const statusMap = Object.fromEntries(statuses.map(s => [s.row_slug, s]))
-    const ctx = { statusMap, designsMap, names, approvalMap }
+    const ctx = { statusMap, designsMap, names, approvalMap, shopifyMap }
 
     const enriched = orders.map(order => enrichOrder(order, ctx))
     let result
@@ -86,6 +89,32 @@ router.get('/', async (req, res) => {
     res.json({ orders: result, count: (search ? result.length : count + manualResult.length), page: fetchPage, pageSize: fetchPageSize })
   } catch (err) {
     console.error('Orders fetch error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Shopify has orders Formaloo/manual entry never captured (customer paid, never
+// filled in the logo form). Cross-reference: every unfulfilled Shopify order that
+// needs a logo, with no matching order_number anywhere in Formaloo or manual orders.
+// Registered before the '/:rowSlug' catch-all below so it isn't shadowed.
+router.get('/missing-logo', async (req, res) => {
+  try {
+    const [shopifyMap, formalooAll, manualRaw] = await Promise.all([
+      fetchOpenShopifyOrders(),
+      fetchOrders({ page: 1, pageSize: 500 }),
+      listManualOrders().catch(() => []),
+    ])
+    const knownNumbers = new Set([
+      ...formalooAll.orders.map(o => String(o.orderNumber || '').trim()),
+      ...manualRaw.map(m => String(m.order_number || '').trim()),
+    ])
+    const missing = Object.values(shopifyMap)
+      .filter(o => o.requiresLogo && ['UNFULFILLED', 'PARTIALLY_FULFILLED'].includes(o.fulfillmentStatus))
+      .filter(o => !knownNumbers.has(o.orderNumber))
+      .sort((a, b) => (a.financialStatus === 'PAID') === (b.financialStatus === 'PAID') ? 0 : a.financialStatus === 'PAID' ? -1 : 1)
+    res.json({ orders: missing, count: missing.length })
+  } catch (err) {
+    console.error('Missing-logo check failed:', err.message)
     res.status(500).json({ error: err.message })
   }
 })

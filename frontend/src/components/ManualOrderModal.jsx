@@ -8,7 +8,9 @@ import { readFileAsDataURL } from '../lib/logoPipeline.js'
 // Same fields Formaloo orders carry, so the rest of the studio can't tell
 // the difference once it exists.
 export default function ManualOrderModal({ initial, onClose, onSaved }) {
-  const isEdit = !!initial
+  // `initial` without a rowSlug means "prefill a new order" (e.g. from the
+  // Shopify missing-logo check) rather than "edit an existing one".
+  const isEdit = !!initial?.rowSlug
   const [companyName,      setCompanyName]      = useState(initial?.companyName || '')
   const [orderNumber,      setOrderNumber]      = useState(initial?.orderNumber || '')
   const [googleReviewUrl,  setGoogleReviewUrl]  = useState(initial?.googleReviewUrl || '')

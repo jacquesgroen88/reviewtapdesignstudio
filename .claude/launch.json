@@ -5,8 +5,15 @@
       "name": "frontend",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
-      "cwd": "D:\\Reviewtap Design\\frontend",
+      "cwd": "D:\\Mission Control\\Reviewtap\\Reviewtap Design\\frontend",
       "port": 3000
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "D:\\Mission Control\\Reviewtap\\Reviewtap Design\\backend",
+      "port": 4000
     }
   ]
 }

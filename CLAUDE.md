@@ -72,6 +72,9 @@ via `frontend/vite.config.js`. On Netlify, those paths hit functions instead.
 ### Backend (`backend/src/`)
 - `services/database.js` — Supabase client (REST only). **Caches client, passes `ws` transport.**
 - `services/formaloo.js` — Formaloo API client (auto-refreshing JWT). Field-slug map lives here.
+- `services/shopify.js` — Shopify Admin API client (client-credentials grant, `read_orders` only).
+  Bulk-fetches unfulfilled orders, matched to local orders by `order_number`. See "Shopify order
+  sync" below.
 - `routes/qr.js` — QR CRUD + bulk-import.
 - `routes/orders.js` — list/get Formaloo orders merged with local status; PATCH status.
 - `routes/redirect.js` — local-dev `/r/:code` (Netlify uses the dedicated function instead).
@@ -271,9 +274,31 @@ AFTER the live site is verified on SUPABASE_SERVICE_KEY).
 ## Environment variables (set in Netlify → Site settings → Env vars)
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY` (or `SUPABASE_SERVICE_KEY`)
 - `FORMALOO_API_KEY`, `FORMALOO_API_SECRET`, `FORMALOO_FORM_SLUG=CGQse2u9`, `FORMALOO_WORKSPACE=cHQuChHR`
+- `SHOPIFY_SHOP_DOMAIN=aq6cc7-u1.myshopify.com`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`
+  (Dev Dashboard custom app "Design Studio Sync", `read_orders` scope only — see Shopify sync below)
 - Optional: `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_DRIVE_FOLDER_ID` (Drive upload),
   `VITE_QR_BASE_URL` (override the QR redirect base, e.g. `https://qr.reviewtap.co.za/r`).
 Local: `backend/.env` (gitignored) holds the same. Real values are committed there locally only.
+
+---
+
+## Shopify order sync (added 2026-07-09)
+Formaloo only captures boolean "ordered stand/card" — never real quantities, and a
+customer can pay on Shopify without ever filling in the Formaloo form. `services/shopify.js`
+fixes both: a Dev Dashboard custom app ("Design Studio Sync", client-credentials grant,
+`read_orders` scope only — no customer PII) pulls unfulfilled Shopify orders, matches them
+to Formaloo/manual orders by `order_number`, and:
+- Adds live `order.shopify = {quantity, fulfillmentStatus, financialStatus}` to every
+  order card whose number matches (`enrichOrder` in `routes/orders.js`).
+- Exposes `GET /api/orders/missing-logo` — Shopify orders needing a logo ("Custom" in the
+  product title) with **no** matching Formaloo/manual order at all — rendered as a
+  dismissible orange banner at the top of the Orders tab, each with a "+ Log manually"
+  shortcut that opens `ManualOrderModal` prefilled with the order number + stand/card guess.
+- In-memory cache (5 min) on the bulk fetch — fine on Netlify Functions since warm
+  containers reuse it, same pattern as `formaloo.js`'s token cache.
+Dev Dashboard app: `dev.shopify.com/dashboard/155113118/apps/395276976129`. Only Level-1
+order data is used (line items/quantities/fulfillment status) — that tier is always
+available on every Shopify plan, so no protected-customer-data review was needed.
 
 ---
 

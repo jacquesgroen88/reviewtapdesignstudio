@@ -45,7 +45,18 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
   const [search,      setSearch]      = useState('')   // input value
   const [searchTerm,  setSearchTerm]  = useState('')   // debounced, sent to backend
   const [manualModal, setManualModal] = useState(null)   // {mode:'new'} | {mode:'edit', order} | null
+  const [missingLogo, setMissingLogo] = useState([])
+  const [missingLogoOpen, setMissingLogoOpen] = useState(false)
   const PAGE_SIZE = 30
+
+  // Shopify orders that need a logo but never came through Formaloo or manual
+  // entry — checked once on load, not tied to the filter/search/page state.
+  useEffect(() => {
+    apiFetch('/api/orders/missing-logo')
+      .then(res => res.ok ? res.json() : { orders: [] })
+      .then(data => setMissingLogo(data.orders || []))
+      .catch(() => setMissingLogo([]))
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
@@ -159,9 +170,9 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
 
       {manualModal && (
         <ManualOrderModal
-          initial={manualModal.mode === 'edit' ? manualModal.order : null}
+          initial={manualModal.order || null}
           onClose={() => setManualModal(null)}
-          onSaved={() => { setManualModal(null); load() }}
+          onSaved={() => { setManualModal(null); load(); apiFetch('/api/orders/missing-logo').then(r => r.ok ? r.json() : { orders: [] }).then(d => setMissingLogo(d.orders || [])).catch(() => {}) }}
         />
       )}
 
@@ -184,6 +195,37 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
           </button>
         )}
       </div>
+
+      {missingLogo.length > 0 && (
+        <div className="bg-orange-50 border border-orange-100 rounded-xl mb-4 overflow-hidden">
+          <button onClick={() => setMissingLogoOpen(o => !o)} className="w-full flex items-center justify-between px-4 py-3 text-left">
+            <span className="text-sm font-medium text-orange-800">
+              {missingLogo.length} Shopify order{missingLogo.length === 1 ? '' : 's'} paid/placed with no logo submission
+            </span>
+            <span className="text-xs text-orange-500">{missingLogoOpen ? '▲ Hide' : '▼ Show'}</span>
+          </button>
+          {missingLogoOpen && (
+            <div className="px-4 pb-3 space-y-1.5">
+              {missingLogo.map(o => (
+                <div key={o.orderNumber} className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 border border-orange-100">
+                  <span className="text-xs font-semibold text-gray-700">#{o.orderNumber}</span>
+                  <span className="text-xs text-gray-400">× {o.quantity}</span>
+                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${o.financialStatus === 'PAID' ? 'bg-brand-100 text-brand-700' : 'bg-gray-100 text-gray-500'}`}>
+                    {o.financialStatus === 'PAID' ? 'Paid' : o.financialStatus.toLowerCase()}
+                  </span>
+                  <span className="flex-1" />
+                  <button
+                    className="text-xs font-medium text-orange-600 hover:text-orange-700"
+                    onClick={() => setManualModal({ mode: 'new', order: { orderNumber: o.orderNumber, orderedStand: o.requiresStand, orderedCard: o.requiresCard } })}
+                  >
+                    + Log manually
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Filter tabs */}
       <div className="flex gap-1 mb-5 border-b border-gray-100">
@@ -303,6 +345,13 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
               <> · ordered {[order.orderedStand && 'Stand', order.orderedCard && 'Card'].filter(Boolean).join(' + ')}</>
             )}
           </p>
+          {order.shopify && (
+            <p className="text-xs text-gray-400 mt-0.5" title="Live from Shopify">
+              Shopify: × {order.shopify.quantity}
+              {' · '}{order.shopify.fulfillmentStatus.replace(/_/g, ' ').toLowerCase()}
+              {order.shopify.financialStatus !== 'PAID' && <span className="text-orange-500"> · {order.shopify.financialStatus.toLowerCase()}</span>}
+            </p>
+          )}
         </div>
         {isManual && (
           <div className="flex items-center gap-1 shrink-0">
