@@ -108,10 +108,13 @@ router.get('/missing-logo', async (req, res) => {
       ...formalooAll.orders.map(o => String(o.orderNumber || '').trim()),
       ...manualRaw.map(m => String(m.order_number || '').trim()),
     ])
+    // Unpaid orders (pending, voided, etc.) aren't confirmed sales yet — chasing
+    // a logo for one is premature, so only paid orders are worth surfacing here.
     const missing = Object.values(shopifyMap)
       .filter(o => o.requiresLogo && ['UNFULFILLED', 'PARTIALLY_FULFILLED'].includes(o.fulfillmentStatus))
+      .filter(o => o.financialStatus === 'PAID')
       .filter(o => !knownNumbers.has(o.orderNumber))
-      .sort((a, b) => (a.financialStatus === 'PAID') === (b.financialStatus === 'PAID') ? 0 : a.financialStatus === 'PAID' ? -1 : 1)
+      .sort((a, b) => new Date(b.shopifyCreatedAt) - new Date(a.shopifyCreatedAt))
     res.json({ orders: missing, count: missing.length })
   } catch (err) {
     console.error('Missing-logo check failed:', err.message)

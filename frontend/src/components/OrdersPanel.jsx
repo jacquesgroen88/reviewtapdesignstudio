@@ -200,7 +200,7 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
         <div className="bg-orange-50 border border-orange-100 rounded-xl mb-4 overflow-hidden">
           <button onClick={() => setMissingLogoOpen(o => !o)} className="w-full flex items-center justify-between px-4 py-3 text-left">
             <span className="text-sm font-medium text-orange-800">
-              {missingLogo.length} Shopify order{missingLogo.length === 1 ? '' : 's'} paid/placed with no logo submission
+              {missingLogo.length} paid Shopify order{missingLogo.length === 1 ? '' : 's'} with no logo submission
             </span>
             <span className="text-xs text-orange-500">{missingLogoOpen ? '▲ Hide' : '▼ Show'}</span>
           </button>
@@ -210,9 +210,6 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
                 <div key={o.orderNumber} className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 border border-orange-100">
                   <span className="text-xs font-semibold text-gray-700">#{o.orderNumber}</span>
                   <span className="text-xs text-gray-400">× {o.quantity}</span>
-                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${o.financialStatus === 'PAID' ? 'bg-brand-100 text-brand-700' : 'bg-gray-100 text-gray-500'}`}>
-                    {o.financialStatus === 'PAID' ? 'Paid' : o.financialStatus.toLowerCase()}
-                  </span>
                   <span className="flex-1" />
                   <button
                     className="text-xs font-medium text-orange-600 hover:text-orange-700"
