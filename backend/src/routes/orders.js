@@ -53,7 +53,11 @@ const STATUS_FILTER_MAP = {
 
 function matchesFilter(order, filter) {
   if (!filter || filter === 'all') return true
-  if (filter === 'awaiting_logo') return !order.logoUrl
+  // Must ALSO have ordered a stand/card — plenty of Formaloo submissions never
+  // ordered anything (orderedStand/orderedCard both false) and legitimately
+  // have no logo; without this check they flooded the tab (found while
+  // testing search: 132 "awaiting logo" results instead of the real ~30).
+  if (filter === 'awaiting_logo') return !order.logoUrl && (order.orderedStand || order.orderedCard)
   const target = STATUS_FILTER_MAP[filter]
   return target ? order.status === target : true
 }
