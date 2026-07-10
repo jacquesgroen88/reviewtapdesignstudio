@@ -1,11 +1,15 @@
 import axios from 'axios'
 
-// Only proxy from trusted hosts (Formaloo's S3 + Formaloo domains)
+// Only proxy from trusted hosts (Formaloo's S3 + Formaloo domains, plus OUR
+// OWN Supabase storage — manual-order/logo-request logos live there).
+// NOTE: this list also exists in backend/src/routes/proxyImage.js (local dev)
+// — keep both in sync (same two-copies trap as CLAUDE.md Gotcha #14).
 const ALLOWED_HOSTS = [
   's3.amazonaws.com',
   'amazonaws.com',
   'formaloo.me',
   'formaloo.com',
+  'urwqhjcocnclvhomuksm.supabase.co',   // our project only — not *.supabase.co
 ]
 
 // Standalone Netlify Function — returns the image base64-encoded with

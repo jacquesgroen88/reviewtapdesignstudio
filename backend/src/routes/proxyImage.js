@@ -3,13 +3,18 @@ import axios   from 'axios'
 
 const router = express.Router()
 
-// Only allow proxying from trusted hosts (Formaloo's S3 + Formaloo domains)
+// Only allow proxying from trusted hosts (Formaloo's S3 + Formaloo domains,
+// plus OUR OWN Supabase storage — manual-order/logo-request logos live there).
+// NOTE: this list exists in TWO places (here + netlify/functions/proxy-image.js,
+// the copy production actually runs) — change both or the fix only works in
+// local dev. Same two-copies trap as CLAUDE.md Gotcha #14.
 const ALLOWED_HOSTS = [
   's3.amazonaws.com',
   'amazonaws.com',
   'formaloo.me',
   'formaloo.com',
   'formaloo-en.s3.amazonaws.com',
+  'urwqhjcocnclvhomuksm.supabase.co',   // our project only — not *.supabase.co
 ]
 
 // GET /api/proxy-image?url=<encoded remote image url>
