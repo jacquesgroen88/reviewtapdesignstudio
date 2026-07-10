@@ -8,6 +8,7 @@ import DesignLibrary  from './components/DesignLibrary.jsx'
 import Login          from './components/Login.jsx'
 import Welcome        from './components/Welcome.jsx'
 import TeamPanel      from './components/TeamPanel.jsx'
+import ActivityPanel  from './components/ActivityPanel.jsx'
 import { getProduct } from './lib/products.js'
 import { supabase, authConfigured } from './lib/supabase.js'
 import { apiFetch } from './lib/api.js'
@@ -242,6 +243,12 @@ export default function App() {
                 </svg>
                 QR Codes
               </NavTab>
+              <NavTab to="/activity" onClick={guardedNavClick}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                </svg>
+                Activity
+              </NavTab>
               {isAdmin && (
                 <NavTab to="/team" onClick={guardedNavClick}>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -300,6 +307,7 @@ export default function App() {
             />
           } />
           <Route path="/qrcodes" element={<AdminPanel />} />
+          <Route path="/activity" element={<ActivityPanel />} />
           {isAdmin && <Route path="/team" element={<TeamPanel />} />}
           <Route path="*" element={<NotFound />} />
         </Routes>

@@ -115,6 +115,7 @@ export async function markReminded(token) {
 // Record a client's response and automate the order status:
 // every design approved → pending_print; any changes requested → pending.
 import { setOrderStatus } from './database.js'
+import { logActivity } from './activityLog.js'
 
 export async function handleApprovalResponse(token, designId, response, comment) {
   if (!['approved', 'changes'].includes(response)) throw new Error('invalid response')
@@ -127,6 +128,16 @@ export async function handleApprovalResponse(token, designId, response, comment)
     return { ...i, response, responded_at: new Date().toISOString(), comment: comment || null }
   })
   await updateApprovalItems(token, items)
+
+  // Client action — no team session, actor identified by the approval's own
+  // client_name (this is the only source of "who" for a public, no-login page).
+  logActivity({
+    actorType: 'client', actorLabel: approval.client_name || null,
+    action: response === 'approved' ? 'approval.approved' : 'approval.changesRequested',
+    targetType: 'order', targetId: approval.owner_slug || token,
+    targetLabel: approval.client_name ? `${approval.client_name}${approval.order_number ? ` (#${approval.order_number})` : ''}` : null,
+    metadata: { comment: comment || null, designId },
+  })
 
   if (approval.owner_slug) {
     const anyChanges = items.some(i => i.response === 'changes')

@@ -4,6 +4,7 @@ import express from 'express'
 import { nanoid } from 'nanoid'
 import { setLogoRequestToken, getManualOrder } from '../services/manualOrders.js'
 import { normalizePhone } from '../services/ghl.js'
+import { logActivity } from '../services/activityLog.js'
 
 const router = express.Router()
 
@@ -28,6 +29,10 @@ router.post('/', async (req, res) => {
     const updated = order.request_token ? order : await setLogoRequestToken(rowSlug, token)
 
     const url = `${PUBLIC_BASE()}/logo-request/${token}`
+    logActivity({
+      actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null,
+      action: 'logoRequest.sent', targetType: 'order', targetId: rowSlug, targetLabel: updated.company_name,
+    })
     res.status(201).json({
       token,
       url,

@@ -142,13 +142,16 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
     return () => clearTimeout(t)
   }, [search])
 
-  async function updateStatus(rowSlug, status) {
+  async function updateStatus(order, status) {
+    const rowSlug = order.rowSlug
     setUpdating(rowSlug)
     try {
       const res = await apiFetch(`/api/orders/${rowSlug}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
+        // companyName/orderNumber are for the activity log label only — the
+        // order's already in view, cheaper than a Formaloo round-trip server-side.
+        body: JSON.stringify({ status, companyName: order.companyName, orderNumber: order.orderNumber }),
       })
       if (!res.ok) throw new Error(await res.text())
       setOrders(prev => prev.map(o => o.rowSlug === rowSlug ? { ...o, status } : o))
@@ -346,7 +349,7 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
                 order={order}
                 onNewDesign={() => onNewDesign(order)}
                 onOpenDesign={onOpenDesign}
-                onStatusChange={s => updateStatus(order.rowSlug, s)}
+                onStatusChange={s => updateStatus(order, s)}
                 isUpdating={updating === order.rowSlug}
                 onSendApproval={() => sendApproval(order)}
                 isSendingApproval={sendingApproval === order.rowSlug}

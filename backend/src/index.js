@@ -12,6 +12,7 @@ import approvalsRouter from './routes/approvals.js'
 import approvePublicRouter from './routes/approvePublic.js'
 import logoRequestsRouter from './routes/logoRequests.js'
 import logoRequestPublicRouter from './routes/logoRequestPublic.js'
+import activityRouter from './routes/activity.js'
 import proxyImageRouter from './routes/proxyImage.js'
 import { requireAuth } from './middleware/auth.js'
 
@@ -39,5 +40,6 @@ app.use('/api/designs', designsRouter)
 app.use('/api/team',    teamRouter)
 app.use('/api/approvals', approvalsRouter)
 app.use('/api/logo-requests', logoRequestsRouter)
+app.use('/api/activity', activityRouter)
 
 app.listen(PORT, () => console.log(`ReviewTap backend :${PORT}`))

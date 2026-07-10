@@ -4,6 +4,7 @@
 // (keyed by row_slug) work identically for both sources.
 import { createClient } from '@supabase/supabase-js'
 import ws from 'ws'
+import { logActivity } from './activityLog.js'
 
 let _client = null
 function getClient() {
@@ -98,5 +99,9 @@ export async function fulfillLogoRequest(token, { logoUrl, nameOrLink }) {
   else if (trimmed) patch.company_name = trimmed
   const { data, error } = await getClient().from('manual_orders').update(patch).eq('request_token', token).select().single()
   if (error) throw error
+  logActivity({
+    actorType: 'client', actorLabel: data.company_name || null,
+    action: 'logo.uploaded', targetType: 'order', targetId: data.row_slug, targetLabel: data.company_name || null,
+  })
   return data
 }

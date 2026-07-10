@@ -8,6 +8,7 @@ import {
   createApproval, getApproval, uploadMockup, supersedeForDesigns,
 } from '../services/approvals.js'
 import { ghlConfigured, upsertContact, sendApprovalTemplate, normalizePhone } from '../services/ghl.js'
+import { logActivity } from '../services/activityLog.js'
 
 const router = express.Router()
 
@@ -76,6 +77,13 @@ router.post('/', async (req, res) => {
 
     // Sending an approval means the order is now awaiting the client
     if (ownerSlug) setOrderStatus(ownerSlug, 'pending_approval', 'Approval link sent').catch(() => {})
+
+    logActivity({
+      actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null,
+      action: 'approval.sent', targetType: 'order', targetId: ownerSlug || token,
+      targetLabel: clientName ? `${clientName}${orderNumber ? ` (#${orderNumber})` : ''}` : null,
+      metadata: { designCount: storedItems.length },
+    })
 
     const url = `${PUBLIC_BASE()}/approve/${token}`
     res.status(201).json({

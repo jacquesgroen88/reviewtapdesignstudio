@@ -3,6 +3,7 @@
 // invitee lands on /welcome, sets display name + password (POST /profile).
 import express from 'express'
 import { requireAdmin, getAuthAdminClient, bustAuthCache } from '../middleware/auth.js'
+import { logActivity } from '../services/activityLog.js'
 
 const router = express.Router()
 
@@ -16,6 +17,13 @@ router.get('/me', (req, res) => {
 // First-login setup / profile update: display name (+ role fixed server-side)
 router.post('/profile', async (req, res) => {
   try {
+    // Only genuinely invited users may create a first profile — invited_role
+    // metadata is set exclusively by admin.inviteUserByEmail below, never by
+    // a self-registered account. Existing team members (req.profile already
+    // set) can still update their own name/password freely.
+    if (!req.profile && !req.user.metadata?.invited_role) {
+      return res.status(403).json({ error: 'This account was never invited. Ask an admin to invite you from the Team page.' })
+    }
     const displayName = (req.body?.displayName || '').trim()
     if (!displayName) return res.status(400).json({ error: 'displayName required' })
     const supa = getAuthAdminClient()
@@ -67,6 +75,10 @@ router.post('/invite', requireAdmin, async (req, res) => {
       data: { invited_role: role },
     })
     if (error) throw error
+    logActivity({
+      actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null,
+      action: 'team.invited', targetType: 'team_member', targetId: data.user.id, targetLabel: email, metadata: { role },
+    })
     res.status(201).json({ id: data.user.id, email, role })
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
@@ -76,8 +88,13 @@ router.delete('/:id', requireAdmin, async (req, res) => {
   try {
     if (req.params.id === req.user.id) return res.status(400).json({ error: "You can't remove yourself" })
     const supa = getAuthAdminClient()
+    const { data: removedUser } = await supa.auth.admin.getUserById(req.params.id).catch(() => ({ data: null }))
     const { error } = await supa.auth.admin.deleteUser(req.params.id)
     if (error) throw error
+    logActivity({
+      actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null,
+      action: 'team.removed', targetType: 'team_member', targetId: req.params.id, targetLabel: removedUser?.user?.email || null,
+    })
     bustAuthCache()
     res.status(204).end()
   } catch (err) { res.status(500).json({ error: err.message }) }

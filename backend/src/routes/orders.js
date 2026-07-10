@@ -7,8 +7,13 @@ import {
   listManualOrders, getManualOrder, createManualOrder, updateManualOrder, deleteManualOrder, uploadLogo,
 } from '../services/manualOrders.js'
 import { fetchOpenShopifyOrders } from '../services/shopify.js'
+import { logActivity } from '../services/activityLog.js'
 
 const router = express.Router()
+
+function actorFrom(req) {
+  return { actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null }
+}
 
 const VALID_STATUSES = ['pending', 'ready', 'pending_approval', 'pending_print', 'done', 'skipped']
 
@@ -171,9 +176,17 @@ router.get('/:rowSlug', async (req, res) => {
 // (Design read/write moved to /api/designs — designs are first-class now.)
 
 router.patch('/:rowSlug/status', async (req, res) => {
-  const { status, note } = req.body
+  const { status, note, companyName, orderNumber } = req.body
   if (!VALID_STATUSES.includes(status)) return res.status(400).json({ error: `status must be one of: ${VALID_STATUSES.join(', ')}` })
+  const previous = await getOrderStatus(req.params.rowSlug)
   await setOrderStatus(req.params.rowSlug, status, note)
+  // companyName/orderNumber come from the order card already in view — avoids
+  // an extra Formaloo round-trip just to label the log entry.
+  const label = companyName ? `${companyName}${orderNumber ? ` (#${orderNumber})` : ''}` : req.params.rowSlug
+  logActivity({
+    ...actorFrom(req), action: 'order.status_changed', targetType: 'order', targetId: req.params.rowSlug, targetLabel: label,
+    metadata: { from: previous?.status || 'pending', to: status, note: note || null },
+  })
   res.json({ ok: true, rowSlug: req.params.rowSlug, status })
 })
 
@@ -200,6 +213,7 @@ router.post('/manual', async (req, res) => {
       ordered_card: !!orderedCard,
       created_by: req.user?.id || null,
     })
+    logActivity({ ...actorFrom(req), action: 'manualOrder.created', targetType: 'order', targetId: rowSlug, targetLabel: row.company_name })
     res.status(201).json(toOrderShape(row))
   } catch (err) {
     console.error('manual order create failed:', err.message)
@@ -221,6 +235,7 @@ router.patch('/manual/:rowSlug', async (req, res) => {
     }
     if (logo) fields.logoUrl = await uploadLogo(req.params.rowSlug, logo)
     const row = await updateManualOrder(req.params.rowSlug, fields)
+    logActivity({ ...actorFrom(req), action: 'manualOrder.updated', targetType: 'order', targetId: req.params.rowSlug, targetLabel: row.company_name })
     res.json(toOrderShape(row))
   } catch (err) {
     console.error('manual order update failed:', err.message)
@@ -230,7 +245,9 @@ router.patch('/manual/:rowSlug', async (req, res) => {
 
 router.delete('/manual/:rowSlug', async (req, res) => {
   try {
+    const existing = await getManualOrder(req.params.rowSlug)
     await deleteManualOrder(req.params.rowSlug)
+    if (existing) logActivity({ ...actorFrom(req), action: 'manualOrder.deleted', targetType: 'order', targetId: req.params.rowSlug, targetLabel: existing.company_name })
     res.status(204).end()
   } catch (err) {
     res.status(500).json({ error: err.message })

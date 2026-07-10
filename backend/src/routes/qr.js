@@ -2,8 +2,13 @@ import express from 'express'
 import { nanoid } from 'nanoid'
 import { listQRCodes, getQRCode, createQRCode, updateQRCode, deleteQRCode, archiveQRCode, bulkImport, getProfileNames } from '../services/database.js'
 import { requireAdmin } from '../middleware/auth.js'
+import { logActivity } from '../services/activityLog.js'
 
 const router = express.Router()
+
+function actorFrom(req) {
+  return { actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null }
+}
 
 // Presentation-only styling saved with a code. Whitelist keys so arbitrary
 // JSON can't be stored; null clears the style (back to plain black/white).
@@ -51,6 +56,7 @@ router.post('/', async (req, res) => {
     const existing = await listQRCodes()
     const finalLabel = uniqueLabel(label.trim(), existing)
     const qr = await createQRCode({ id, label: finalLabel, destination: destination.trim(), defaultStyle: sanitizeStyle(style), createdBy: req.user?.id })
+    logActivity({ ...actorFrom(req), action: 'qr.created', targetType: 'qr_code', targetId: id, targetLabel: finalLabel })
     res.status(201).json(qr)
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'ID already exists' })
@@ -62,7 +68,9 @@ router.patch('/:id', async (req, res) => {
   const { label, destination, style } = req.body
   const qr = await getQRCode(req.params.id)
   if (!qr) return res.status(404).json({ error: 'Not found' })
-  res.json(await updateQRCode(req.params.id, { label, destination, defaultStyle: sanitizeStyle(style) }))
+  const updated = await updateQRCode(req.params.id, { label, destination, defaultStyle: sanitizeStyle(style) })
+  logActivity({ ...actorFrom(req), action: 'qr.updated', targetType: 'qr_code', targetId: req.params.id, targetLabel: updated.label })
+  res.json(updated)
 })
 
 // "Delete" = archive: the code vanishes from lists/pickers but /r/:id keeps
@@ -74,10 +82,12 @@ router.delete('/:id', async (req, res, next) => {
   if (req.query.hard === 'true') {
     return requireAdmin(req, res, async () => {
       await deleteQRCode(req.params.id)
+      logActivity({ ...actorFrom(req), action: 'qr.deleted', targetType: 'qr_code', targetId: req.params.id, targetLabel: qr.label })
       res.status(204).end()
     })
   }
   await archiveQRCode(req.params.id)
+  logActivity({ ...actorFrom(req), action: 'qr.archived', targetType: 'qr_code', targetId: req.params.id, targetLabel: qr.label })
   res.status(204).end()
 })
 

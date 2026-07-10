@@ -23,18 +23,27 @@ export default function Login() {
     } finally { setBusy(false) }
   }
 
-  // Fallback / password reset: emails a magic link that lands on /welcome
+  // Fallback / password reset: emails a magic link that lands on /welcome.
+  // shouldCreateUser:false is explicit defense-in-depth — this must only ever
+  // work for someone already invited, never silently create a new account
+  // even if the project's own signup setting is ever toggled back on.
   async function sendLink() {
     if (!email.trim()) { setError('Enter your email first, then request a link.'); return }
     setBusy(true); setError('')
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim(),
-        options: { emailRedirectTo: `${window.location.origin}/welcome` },
+        options: { emailRedirectTo: `${window.location.origin}/welcome`, shouldCreateUser: false },
       })
       if (error) throw error
       setLinkSent(true)
-    } catch (err) { setError(err.message) }
+    } catch (err) {
+      // With shouldCreateUser:false, an email that was never invited errors
+      // here instead of silently creating an account.
+      setError(err.message.includes('Signups not allowed') || err.message.includes('not found')
+        ? "That email isn't on the team yet — ask an admin to invite you from the Team page."
+        : err.message)
+    }
     finally { setBusy(false) }
   }
 

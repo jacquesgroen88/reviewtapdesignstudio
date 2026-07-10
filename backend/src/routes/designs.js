@@ -2,6 +2,11 @@ import express from 'express'
 import { nanoid } from 'nanoid'
 import { listDesigns, getDesign, createDesign, updateDesign, deleteDesign, getAllOrderStatuses, getProfileNames, setOrderStatus } from '../services/database.js'
 import { supersedeForDesigns } from '../services/approvals.js'
+import { logActivity } from '../services/activityLog.js'
+
+function actorFrom(req) {
+  return { actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null }
+}
 
 const router = express.Router()
 
@@ -41,11 +46,13 @@ router.post('/', async (req, res) => {
     if (!name?.trim()) return res.status(400).json({ error: 'name required' })
     if (!productId || !variantId || !design) return res.status(400).json({ error: 'productId, variantId, design required' })
     const id = `design_${nanoid(10)}`
-    res.status(201).json(await createDesign({
+    const created = await createDesign({
       id, name: name.trim(), ownerSlug: ownerSlug || null, productId, variantId, design,
       orderNumber: (orderNumber || '').trim() || null,
       createdBy: req.user?.id,
-    }))
+    })
+    logActivity({ ...actorFrom(req), action: 'design.created', targetType: 'design', targetId: id, targetLabel: created.name })
+    res.status(201).json(created)
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
 
@@ -62,13 +69,16 @@ router.put('/:id', async (req, res) => {
       supersedeForDesigns([req.params.id]).catch(err => console.error('supersede failed:', err.message))
       if (d.owner_slug) setOrderStatus(d.owner_slug, 'pending_approval', 'Design updated — needs (re)approval').catch(() => {})
     }
+    logActivity({ ...actorFrom(req), action: 'design.updated', targetType: 'design', targetId: req.params.id, targetLabel: updated.name })
     res.json(updated)
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
 
 router.delete('/:id', async (req, res) => {
   try {
+    const d = await getDesign(req.params.id)
     await deleteDesign(req.params.id)
+    if (d) logActivity({ ...actorFrom(req), action: 'design.deleted', targetType: 'design', targetId: req.params.id, targetLabel: d.name })
     res.status(204).end()
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
@@ -80,10 +90,12 @@ router.post('/:id/duplicate', async (req, res) => {
     if (!src) return res.status(404).json({ error: 'Not found' })
     const id = `design_${nanoid(10)}`
     const name = (req.body?.name || `${src.name} (copy)`).trim()
-    res.status(201).json(await createDesign({
+    const created = await createDesign({
       id, name, ownerSlug: src.owner_slug, productId: src.product_id, variantId: src.variant_id, design: src.design,
       orderNumber: src.order_number, createdBy: req.user?.id,
-    }))
+    })
+    logActivity({ ...actorFrom(req), action: 'design.duplicated', targetType: 'design', targetId: id, targetLabel: created.name, metadata: { fromDesignId: src.id } })
+    res.status(201).json(created)
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
 

@@ -286,6 +286,41 @@ First-time flow: invite email → /welcome → set name + password → /orders.
 Deploy sequencing + RLS lockdown steps: see DEPLOY-PHASE2.md (RLS flip only
 AFTER the live site is verified on SUPABASE_SERVICE_KEY).
 
+**Signup lockdown (2026-07-09):** confirmed live that Supabase's public signup API would
+create a fully-working account for anyone with the anon key (which is baked into the public
+frontend bundle) — verified by actually creating and deleting a throwaway account. Closed at
+the app layer: `POST /api/team/profile` (`routes/team.js`) now rejects any first-time profile
+creation unless `req.user.metadata.invited_role` is set, which ONLY `admin.inviteUserByEmail`
+ever populates — a self-registered session can never pass. `Login.jsx`'s magic-link fallback
+also sets `shouldCreateUser: false` as an explicit second layer. **Still needs Jacques to do
+by hand:** Supabase Dashboard → Authentication → Sign In / Providers → Email → turn OFF "Allow
+new users to sign up" (I can't touch account-level access settings myself). RLS itself was
+already correctly locked everywhere except `fulfillment_runs` (pre-existing, tracked gap) — the
+issue was purely the app trusting any authenticated Supabase user, not a database-level leak.
+
+---
+
+## Activity log (Feature K, added 2026-07-09)
+Audit trail — who did what, when, both team (Jacques/Giorgio/Diane) and clients (logo
+uploads, approval responses). New `activity_log` table (RLS on, no policies — deny-all,
+same pattern as every other locked table; written only via the backend's service-role key).
+- `services/activityLog.js`: `logActivity()` (fire-and-forget, swallows its own errors so a
+  logging failure never breaks the action it's logging) + `listActivity()`.
+- Team-side calls live directly in the route files (`designs.js`, `orders.js`, `qr.js`,
+  `approvals.js`, `logoRequests.js`, `team.js`) — those files are genuinely shared imports
+  between `index.js` and `api.js`, so one call site covers both (unlike Gotcha #14's route
+  *registration*, which still needs adding to both — `GET /api/activity` was added to both).
+- Client-side calls live in the two SHARED SERVICE functions instead of the route handlers —
+  `handleApprovalResponse` (`services/approvals.js`) and `fulfillLogoRequest`
+  (`services/manualOrders.js`) — since both are already called from both the local-dev Express
+  route AND the standalone Netlify function for their respective public pages. Putting the log
+  call in the shared function covers both entry points with one edit, no duplication risk.
+- Order-status-change labels come from `companyName`/`orderNumber` passed by the frontend
+  (already in view on the order card) rather than an extra Formaloo fetch server-side.
+- Frontend: `components/ActivityPanel.jsx` (new `/activity` tab) — reverse-chronological feed,
+  action→sentence templates, cursor-based "Load more". Verified the whole pipeline end-to-end
+  with real writes/reads against Supabase before shipping (test rows cleaned up after).
+
 ## Environment variables (set in Netlify → Site settings → Env vars)
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY` (or `SUPABASE_SERVICE_KEY`)
 - `FORMALOO_API_KEY`, `FORMALOO_API_SECRET`, `FORMALOO_FORM_SLUG=CGQse2u9`, `FORMALOO_WORKSPACE=cHQuChHR`
