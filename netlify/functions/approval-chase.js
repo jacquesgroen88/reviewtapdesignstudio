@@ -1,8 +1,9 @@
 // Scheduled daily: nudge clients who haven't answered an approval sent >48h
 // ago (max one reminder per link). No-ops until the Reviewtap System (GHL)
-// WhatsApp template is configured — the wa.me flow has no automated channel.
+// approval workflow is configured — the wa.me flow has no automated channel.
+// Reminders reuse the same workflow enrollment as the initial send.
 import { listChaseCandidates, markReminded } from '../../backend/src/services/approvals.js'
-import { ghlConfigured, upsertContact, sendApprovalTemplate } from '../../backend/src/services/ghl.js'
+import { ghlConfigured, sendApprovalViaGhl } from '../../backend/src/services/ghl.js'
 
 export const config = { schedule: '@daily' }
 
@@ -17,11 +18,9 @@ export async function handler() {
     for (const a of due) {
       if (!a.whatsapp) continue
       try {
-        const contact = await upsertContact({ name: a.client_name, phone: a.whatsapp })
-        await sendApprovalTemplate({
-          contactId: contact.id,
+        await sendApprovalViaGhl({
           clientName: a.client_name,
-          orderNumber: a.order_number,
+          phone: a.whatsapp,
           url: `${process.env.PUBLIC_URL || 'https://link.reviewtap.co.za'}/approve/${a.token}`,
         })
         await markReminded(a.token)

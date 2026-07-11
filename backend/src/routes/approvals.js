@@ -7,7 +7,7 @@ import { fetchOrder } from '../services/formaloo.js'
 import {
   createApproval, getApproval, uploadMockup, supersedeForDesigns,
 } from '../services/approvals.js'
-import { ghlConfigured, upsertContact, sendApprovalTemplate, normalizePhone } from '../services/ghl.js'
+import { ghlConfigured, sendApprovalViaGhl, normalizePhone } from '../services/ghl.js'
 import { logActivity } from '../services/activityLog.js'
 
 const router = express.Router()
@@ -98,21 +98,17 @@ router.post('/', async (req, res) => {
   }
 })
 
-// Auto-send via the Reviewtap System (GHL) — requires the approved template
+// Auto-send via the Reviewtap System (GHL): writes the link to the contact's
+// rt_studio_link field and enrolls them in the approval workflow, which sends
+// the approved WhatsApp template. Manual wa.me/copy-link stay available always.
 router.post('/:token/send-ghl', async (req, res) => {
   try {
     if (!ghlConfigured()) return res.status(503).json({ error: 'Reviewtap System sending not configured yet — use the WhatsApp button' })
     const approval = await getApproval(req.params.token)
     if (!approval) return res.status(404).json({ error: 'Not found' })
     if (!approval.whatsapp) return res.status(400).json({ error: 'No WhatsApp number on this approval' })
-    const contact = await upsertContact({ name: approval.client_name, phone: approval.whatsapp })
     const url = `${PUBLIC_BASE()}/approve/${approval.token}`
-    await sendApprovalTemplate({
-      contactId: contact.id,
-      clientName: approval.client_name,
-      orderNumber: approval.order_number,
-      url,
-    })
+    const contact = await sendApprovalViaGhl({ clientName: approval.client_name, phone: approval.whatsapp, url })
     res.json({ ok: true, contactId: contact.id })
   } catch (err) {
     console.error('GHL send failed:', err.response?.data || err.message)

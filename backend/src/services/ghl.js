@@ -1,15 +1,31 @@
-// Reviewtap System (GHL) integration for approval sends.
-// GATED: only active when GHL_PIT_KEY + GHL_LOCATION_ID + GHL_APPROVAL_TEMPLATE_ID
-// are all set. Until the WhatsApp template is approved by Meta, the wa.me
-// tap-to-send flow is the primary channel and this module reports unconfigured.
-// NOTE: the template-send payload needs one live verification once the
-// template exists — schema confirmed against docs, not yet against the wire.
+// Reviewtap System (GHL) integration for WhatsApp sends.
+//
+// HOW IT WORKS (reworked 2026-07-11): GHL's public API does not expose Meta
+// WhatsApp business templates (only SMS/email templates), so the studio never
+// sends a template directly. Instead it (1) upserts the contact with the link
+// written into a custom field, then (2) adds the contact to a GHL WORKFLOW
+// whose only action is "Send WhatsApp template" — the template's variables
+// resolve from the contact fields GHL-side. This is the documented pattern,
+// and it keeps the message editable by Jacques inside GHL without code changes.
+//
+// Custom fields (created 2026-07-11 in the RT sub-account):
+//   rt_studio_link  — approval page URL   (approval template)
+//   rt_logo_upload  — logo-request URL    (logo_request template)
+//
+// GATED per flow: approvals need GHL_PIT_KEY + GHL_LOCATION_ID +
+// GHL_APPROVAL_WORKFLOW_ID; logo requests swap in GHL_LOGO_WORKFLOW_ID.
+// Until configured, the manual wa.me + copy-link flows are the only channel —
+// and they STAY available regardless (Jacques wants the manual path kept).
 import axios from 'axios'
 
 const BASE = 'https://services.leadconnectorhq.com'
 
 export function ghlConfigured() {
-  return !!(process.env.GHL_PIT_KEY && process.env.GHL_LOCATION_ID && process.env.GHL_APPROVAL_TEMPLATE_ID)
+  return !!(process.env.GHL_PIT_KEY && process.env.GHL_LOCATION_ID && process.env.GHL_APPROVAL_WORKFLOW_ID)
+}
+
+export function ghlLogoConfigured() {
+  return !!(process.env.GHL_PIT_KEY && process.env.GHL_LOCATION_ID && process.env.GHL_LOGO_WORKFLOW_ID)
 }
 
 function headers() {
@@ -31,24 +47,41 @@ export function normalizePhone(raw) {
   return `+${digits}`
 }
 
-// Find-or-create by phone (Jacques-approved default: auto-create contacts)
-export async function upsertContact({ name, phone }) {
+// Find-or-create by phone, writing the link into the given custom field so
+// the WhatsApp template can resolve it (Jacques-approved default: auto-create).
+export async function upsertContact({ name, phone, customFields }) {
   const res = await axios.post(`${BASE}/contacts/upsert`, {
     locationId: process.env.GHL_LOCATION_ID,
     phone: normalizePhone(phone),
     name: name || undefined,
+    ...(customFields ? { customFields } : {}),
   }, { headers: headers(), timeout: 15000 })
   return res.data?.contact ?? res.data
 }
 
-// Business-initiated WhatsApp = template message (Meta rule).
-// Variables: {{1}} client name, {{2}} order number, {{3}} approval link.
-export async function sendApprovalTemplate({ contactId, clientName, orderNumber, url }) {
-  const res = await axios.post(`${BASE}/conversations/messages`, {
-    type: 'WhatsApp',
-    contactId,
-    templateId: process.env.GHL_APPROVAL_TEMPLATE_ID,
-    templateParams: [clientName || 'there', orderNumber || 'your order', url],
-  }, { headers: headers(), timeout: 15000 })
+export async function addToWorkflow(contactId, workflowId) {
+  const res = await axios.post(`${BASE}/contacts/${contactId}/workflow/${workflowId}`, {}, { headers: headers(), timeout: 15000 })
   return res.data
+}
+
+// Approval: write the approval URL to rt_studio_link, enroll in the approval
+// workflow (which sends the design_approval WhatsApp template).
+export async function sendApprovalViaGhl({ clientName, phone, url }) {
+  const contact = await upsertContact({
+    name: clientName, phone,
+    customFields: [{ key: 'rt_studio_link', field_value: url }],
+  })
+  await addToWorkflow(contact.id, process.env.GHL_APPROVAL_WORKFLOW_ID)
+  return contact
+}
+
+// Logo request: write the upload URL to rt_logo_upload, enroll in the
+// logo-request workflow (which sends the logo_request WhatsApp template).
+export async function sendLogoRequestViaGhl({ clientName, phone, url }) {
+  const contact = await upsertContact({
+    name: clientName, phone,
+    customFields: [{ key: 'rt_logo_upload', field_value: url }],
+  })
+  await addToWorkflow(contact.id, process.env.GHL_LOGO_WORKFLOW_ID)
+  return contact
 }
