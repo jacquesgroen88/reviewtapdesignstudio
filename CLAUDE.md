@@ -286,6 +286,16 @@ First-time flow: invite email → /welcome → set name + password → /orders.
 Deploy sequencing + RLS lockdown steps: see DEPLOY-PHASE2.md (RLS flip only
 AFTER the live site is verified on SUPABASE_SERVICE_KEY).
 
+**Supabase Site URL config is CONFIRMED broken (2026-07-10, not just suspected):**
+`admin.generateLink` shows auth emails carry `redirect_to=http://localhost:3000` — the
+dev default was never replaced. Until Jacques sets Site URL = https://link.reviewtap.co.za
+and adds /welcome to the redirect allowlist (Dashboard → Authentication → URL
+Configuration), BOTH the login page's "email me a login link" recovery AND team invite
+emails land on a dead localhost URL. Workaround for lost passwords meanwhile: admin API
+password reset (`admin.auth.admin.updateUserById(uid, { password })` with the service
+key) — used for Giorgio 2026-07-10 after confirming his account was healthy
+(`last_sign_in_at` in auth.users tells you if it's an account problem or a password problem).
+
 **Signup lockdown (2026-07-09):** confirmed live that Supabase's public signup API would
 create a fully-working account for anyone with the anon key (which is baked into the public
 frontend bundle) — verified by actually creating and deleting a throwaway account. Closed at
