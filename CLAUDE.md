@@ -96,7 +96,10 @@ via `frontend/vite.config.js`. On Netlify, those paths hit functions instead.
 Two different mental models, on purpose:
 - **Orders = client-driven, job-shaped.** One row per client submission (Formaloo, or manually
   entered). It's where you START work (New design), TRACK it through the status ladder
-  (Pending → Ready → Pending Approval → Pending Print → Done), SEND it for approval, and see
+  (Pending → Ready → Pending Approval → Approved → Print Pending → Done; internal values
+  pending / ready / pending_approval / pending_print / at_printer / done — note
+  `pending_print` is the UI's "Approved" and `at_printer` is "Print Pending", added
+  2026-07-11 to track jobs handed to the printer), SEND it for approval, and see
   the client's answer. You live here for "what does client X need, and where is it."
 - **Design Studio = design-shaped, reusable library.** Every design ever made, independent of
   which order it belongs to (or whether it belongs to one at all — a design can be a pure
@@ -395,12 +398,14 @@ server-rendered-public-page pattern as the approval flow (Feature F), reusing
 
 ---
 
-## Orders filter tabs (reworked 2026-07-09)
-Replaced the old 3-tab set (`needs_design`/`all`/`done`) with 6: **All orders, Awaiting Logo,
-Ready, Pending Approval, Approved, Done**. `Approved` reads the `pending_print` status value
-(set when a client approves via the approval link) — same internal enum, friendlier label
-everywhere it's shown (`STATUS_LABELS`/`STATUS_OPTIONS` in `OrdersPanel.jsx` say "Approved" now,
-not "Pending Print"). `Awaiting Logo` is independent of status — `!order.logoUrl` — and only
+## Orders filter tabs (reworked 2026-07-09, Print Pending added 2026-07-11)
+Replaced the old 3-tab set (`needs_design`/`all`/`done`) with 7: **All orders, Awaiting Logo,
+Ready, Pending Approval, Approved, Print Pending, Done**. `Approved` reads the `pending_print`
+status value (set when a client approves via the approval link) — same internal enum, friendlier
+label everywhere it's shown. `Print Pending` reads the `at_printer` status value (set MANUALLY
+via the status dropdown when a job is handed to the printer, 2026-07-11) — named `at_printer`
+internally precisely because "print_pending" next to the existing "pending_print" would be a
+bug magnet. `Awaiting Logo` is independent of status — `!order.logoUrl` — and only
 ever matches manual orders (Formaloo submissions always include a logo).
 Backend (`routes/orders.js`): any filter other than `'all'` (or an active search) triggers a
 full in-memory scan — pulls a large Formaloo batch (500) + all manual orders, filters both by

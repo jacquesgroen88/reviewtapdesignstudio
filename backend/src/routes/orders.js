@@ -15,7 +15,10 @@ function actorFrom(req) {
   return { actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null }
 }
 
-const VALID_STATUSES = ['pending', 'ready', 'pending_approval', 'pending_print', 'done', 'skipped']
+// Ladder: pending → ready → pending_approval → pending_print (UI "Approved",
+// set automatically when the client approves) → at_printer (UI "Print
+// Pending", set manually when the job is sent to the printer) → done.
+const VALID_STATUSES = ['pending', 'ready', 'pending_approval', 'pending_print', 'at_printer', 'done', 'skipped']
 
 // Shared enrichment for BOTH Formaloo and manually-entered orders — one place
 // joins status/designs/approvals so the two sources behave identically.
@@ -48,11 +51,13 @@ function toOrderShape(m) {
 // about the order having no logo file at all (independent of status) and
 // 'all'/'' which means no filter. 'approved' reads as 'pending_print' — that's
 // the status set when a client approves via the approval link; the UI label
-// is friendlier than the internal print-queue name.
+// is friendlier than the internal print-queue name. 'print_pending' reads
+// as 'at_printer' — jobs sent to the printer, awaiting the physical print.
 const STATUS_FILTER_MAP = {
   ready: 'ready',
   pending_approval: 'pending_approval',
   approved: 'pending_print',
+  print_pending: 'at_printer',
   done: 'done',
 }
 

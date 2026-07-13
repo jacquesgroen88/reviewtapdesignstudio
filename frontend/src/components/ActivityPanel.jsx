@@ -3,7 +3,7 @@ import { apiFetch } from '../lib/api.js'
 
 const STATUS_TEXT = {
   pending: 'Pending', ready: 'Ready', pending_approval: 'Pending Approval',
-  pending_print: 'Approved', done: 'Done', skipped: 'Skipped',
+  pending_print: 'Approved', at_printer: 'Print Pending', done: 'Done', skipped: 'Skipped',
 }
 
 // action → sentence fragment (goes after the actor's name). Keep these terse —

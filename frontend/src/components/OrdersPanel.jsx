@@ -12,6 +12,7 @@ const STATUS_LABELS = {
   ready:            { label: 'Ready',             color: 'bg-teal-100 text-teal-700' },
   pending_approval: { label: 'Pending Approval',  color: 'bg-blue-100 text-blue-700' },
   pending_print:    { label: 'Approved',          color: 'bg-purple-100 text-purple-700' },
+  at_printer:       { label: 'Print Pending',     color: 'bg-indigo-100 text-indigo-700' },
   done:             { label: 'Done',              color: 'bg-brand-100 text-brand-700' },
   skipped:          { label: 'Skipped',           color: 'bg-gray-100 text-gray-500' },
   not_needed:       { label: 'No design',         color: 'bg-gray-100 text-gray-400' },
@@ -24,6 +25,7 @@ const STATUS_OPTIONS = [
   { value: 'ready',            label: 'Ready' },
   { value: 'pending_approval', label: 'Pending Approval' },
   { value: 'pending_print',    label: 'Approved' },
+  { value: 'at_printer',       label: 'Print Pending' },
   { value: 'done',             label: 'Done' },
   { value: 'skipped',          label: 'Skip' },
 ]
@@ -34,6 +36,7 @@ const FILTER_TABS = [
   { id: 'ready',            label: 'Ready' },
   { id: 'pending_approval', label: 'Pending Approval' },
   { id: 'approved',         label: 'Approved' },
+  { id: 'print_pending',    label: 'Print Pending' },
   { id: 'done',             label: 'Done' },
 ]
 

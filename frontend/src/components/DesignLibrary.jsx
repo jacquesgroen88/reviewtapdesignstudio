@@ -14,6 +14,7 @@ const STATUS_CHIP = {
   pending_approval: { label: 'Awaiting approval', color: 'bg-blue-100 text-blue-700' },
   in_progress:      { label: 'Awaiting approval', color: 'bg-blue-100 text-blue-700' },
   pending_print:    { label: 'Approved',          color: 'bg-purple-100 text-purple-700' },
+  at_printer:       { label: 'Print Pending',     color: 'bg-indigo-100 text-indigo-700' },
   done:             { label: 'Done',              color: 'bg-brand-100 text-brand-700' },
   skipped:          { label: 'Skipped',           color: 'bg-gray-100 text-gray-500' },
 }
@@ -93,7 +94,10 @@ export default function DesignLibrary({ onNewDesign, onOpenDesign }) {
     })
   }
 
-  const approvedIds = designs.filter(d => d.order_status === 'pending_print').map(d => d.id)
+  // "Select approved" covers both client-approved (pending_print) and
+  // already-at-printer (at_printer) designs — re-exporting print files for a
+  // job that's at the printer is a legitimate need (reprints, printer asks again).
+  const approvedIds = designs.filter(d => ['pending_print', 'at_printer'].includes(d.order_status)).map(d => d.id)
 
   function selectApproved() {
     setSelected(new Set(approvedIds))
