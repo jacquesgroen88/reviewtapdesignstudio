@@ -8,8 +8,9 @@ let logoIdCounter = 0
 // onToggleBgRemoval / onCropLogo are owned by the parent (DesignCanvas) so the
 // same pipeline logic is shared with the canvas's right-click menu — this
 // panel only owns the loading-spinner UI, not the image processing itself.
-export default function LogoPanel({ logos, onLogosChange, onLogoReady, onLogoRemove, onToggleBgRemoval, onCropLogo, variantId, prefillGoogleUrl, prefillLabel }) {
+export default function LogoPanel({ logos, onLogosChange, onLogoReady, onLogoRemove, onToggleBgRemoval, onReprocessBg, onCropLogo, variantId, prefillGoogleUrl, prefillLabel }) {
   const [processingIds, setProcessingIds] = useState(new Set())
+  const [tolerances, setTolerances]       = useState({})   // per-logo tolerance slider value
 
   // Warm up the background-removal model in the background on mount so the
   // first toggle is fast (the ~30MB model downloads + caches once).
@@ -43,7 +44,21 @@ export default function LogoPanel({ logos, onLogosChange, onLogoReady, onLogoRem
       await onToggleBgRemoval(logoId, currentValue)
     } catch (err) {
       console.error('BG removal failed:', err)
-      alert(`Background removal failed: ${err?.message || err}. The model downloads on first use — if this is the first try, give it a moment and try again.`)
+      alert(`Background removal failed: ${err?.message || err}. The AI fallback downloads on first use — if this is the first try, give it a moment and try again.`)
+    } finally {
+      setProcessingIds(prev => { const s = new Set(prev); s.delete(logoId); return s })
+    }
+  }
+
+  // Re-run removal with an explicit method (tolerance slider release, or the
+  // AI/knockout switch). Wraps the parent handler in the same spinner.
+  async function reprocessBg(logoId, opts) {
+    setProcessingIds(prev => new Set([...prev, logoId]))
+    try {
+      await onReprocessBg(logoId, opts)
+    } catch (err) {
+      console.error('BG reprocess failed:', err)
+      alert(`Background removal failed: ${err?.message || err}. The AI fallback downloads on first use — if this is the first try, give it a moment and try again.`)
     } finally {
       setProcessingIds(prev => { const s = new Set(prev); s.delete(logoId); return s })
     }
@@ -121,23 +136,65 @@ export default function LogoPanel({ logos, onLogosChange, onLogoReady, onLogoRem
                   </button>
                 </div>
 
-                {/* BG removal toggle */}
-                <div className="flex items-center justify-between pt-2 border-t border-gray-50">
-                  <div>
-                    <p className="text-xs font-medium text-gray-700">Remove background</p>
-                    <p className="text-xs text-gray-400">Free · runs in browser</p>
-                  </div>
-                  {isProcessing ? (
-                    <div className="flex items-center gap-1.5">
-                      <svg className="animate-spin w-4 h-4 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                      <span className="text-xs text-gray-400">Processing…</span>
+                {/* BG removal */}
+                <div className="pt-2 border-t border-gray-50 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-medium text-gray-700">Remove background</p>
+                      <p className="text-xs text-gray-400">
+                        {logo.bgRemoved
+                          ? (logo.bgMethodUsed === 'ai' ? 'AI cutout (photo logo)'
+                            : logo.bgMethodUsed === 'none' ? 'Already transparent — left as-is'
+                            : 'Knocked out · free & instant')
+                          : 'Free · runs in browser'}
+                      </p>
                     </div>
-                  ) : (
-                    <label className="toggle">
-                      <input type="checkbox" checked={logo.bgRemoved} onChange={() => toggleBgRemoval(logo.id, logo.bgRemoved)} />
-                      <div className="toggle-track" />
-                      <div className="toggle-thumb" />
-                    </label>
+                    {isProcessing ? (
+                      <div className="flex items-center gap-1.5">
+                        <svg className="animate-spin w-4 h-4 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                        <span className="text-xs text-gray-400">Processing…</span>
+                      </div>
+                    ) : (
+                      <label className="toggle">
+                        <input type="checkbox" checked={logo.bgRemoved} onChange={() => toggleBgRemoval(logo.id, logo.bgRemoved)} />
+                        <div className="toggle-track" />
+                        <div className="toggle-thumb" />
+                      </label>
+                    )}
+                  </div>
+
+                  {/* Fine-tune controls, shown once removal is on */}
+                  {logo.bgRemoved && !isProcessing && (
+                    <div className="space-y-2">
+                      {logo.bgMethodUsed === 'knockout' && (
+                        <div>
+                          <div className="flex items-center justify-between text-xs text-gray-400 mb-0.5">
+                            <span>Edge sensitivity</span>
+                            <span>{tolerances[logo.id] ?? logo.bgTolerance ?? 36}</span>
+                          </div>
+                          <input
+                            type="range" min="8" max="90"
+                            value={tolerances[logo.id] ?? logo.bgTolerance ?? 36}
+                            onChange={(e) => setTolerances(t => ({ ...t, [logo.id]: +e.target.value }))}
+                            onMouseUp={(e) => reprocessBg(logo.id, { method: 'knockout', tolerance: +e.target.value })}
+                            onTouchEnd={(e) => reprocessBg(logo.id, { method: 'knockout', tolerance: +e.target.value })}
+                            className="w-full accent-brand-500"
+                          />
+                          <p className="text-xs text-gray-300 leading-tight">Higher = removes more of a slightly-uneven background.</p>
+                        </div>
+                      )}
+                      {logo.bgMethodUsed === 'ai' ? (
+                        <button onClick={() => reprocessBg(logo.id, { method: 'knockout', tolerance: tolerances[logo.id] ?? logo.bgTolerance ?? 36 })}
+                          className="text-xs font-medium text-gray-500 hover:text-gray-700 underline">
+                          Flat background? Use fast knockout instead
+                        </button>
+                      ) : (
+                        <button onClick={() => reprocessBg(logo.id, { method: 'ai' })}
+                          className="text-xs font-medium text-gray-500 hover:text-gray-700 underline">
+                          Edges look rough? Try AI cutout (photo logos)
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
 

@@ -10,7 +10,7 @@ import { generateStyledQR, QR_BASE_URL } from '../lib/qr.js'
 import { apiFetch } from '../lib/api.js'
 import { useHistory } from '../hooks/useHistory.js'
 import { createApprovalRequest } from '../lib/approvals.js'
-import { removeBg, cropToDataUrl } from '../lib/logoPipeline.js'
+import { removeBackgroundSmart, cropToDataUrl } from '../lib/logoPipeline.js'
 import LogoPanel     from './LogoPanel.jsx'
 import CanvasToolbar from './CanvasToolbar.jsx'
 import Menu          from './Menu.jsx'
@@ -300,18 +300,44 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
   // Pipeline: originalSrc -> bgRemoved? -> crop -> processedSrc. Composing from
   // the cached UNCROPPED bg-removed image means toggling either step never
   // discards the other (spec Feature D).
+  // Run a removal method against the UNCROPPED original, then re-apply any crop.
+  // `bgMethodUsed` is what actually ran ('knockout' | 'ai' | 'none') so the panel
+  // can label it and re-run the right tool.
+  async function applyBgRemoval(logo, opts) {
+    const { src, method } = await removeBackgroundSmart(logo.originalSrc, opts)
+    const processedSrc = logo.crop ? await cropToDataUrl(src, logo.crop) : src
+    return {
+      ...logo, bgRemoved: true, bgRemovedFullSrc: src, processedSrc,
+      bgMethodUsed: method, bgTolerance: opts.tolerance ?? logo.bgTolerance ?? 36,
+    }
+  }
+
   async function handleToggleBgRemoval(logoId, currentValue) {
     const logo = logos.find(l => l.id === logoId)
     if (!logo) return
     let updated
     if (!currentValue) {
-      const bgRemovedFullSrc = logo.bgRemovedFullSrc || await removeBg(logo.originalSrc)
-      const processedSrc = logo.crop ? await cropToDataUrl(bgRemovedFullSrc, logo.crop) : bgRemovedFullSrc
-      updated = { ...logo, bgRemoved: true, bgRemovedFullSrc, processedSrc }
+      // Turning on: reuse the cached removed image if we have it, else run 'auto'.
+      if (logo.bgRemovedFullSrc) {
+        const processedSrc = logo.crop ? await cropToDataUrl(logo.bgRemovedFullSrc, logo.crop) : logo.bgRemovedFullSrc
+        updated = { ...logo, bgRemoved: true, processedSrc }
+      } else {
+        updated = await applyBgRemoval(logo, { method: 'auto', tolerance: logo.bgTolerance ?? 36 })
+      }
     } else {
       const processedSrc = logo.crop ? await cropToDataUrl(logo.originalSrc, logo.crop) : logo.originalSrc
       updated = { ...logo, bgRemoved: false, processedSrc }
     }
+    setLogos(prev => prev.map(l => l.id === logoId ? updated : l))
+    handleLogoReady(updated)
+  }
+
+  // Re-run removal with an explicit method/tolerance (tolerance slider + "Use AI"
+  // button in LogoPanel). Always recomputes from the original — never the cache.
+  async function handleReprocessBg(logoId, opts) {
+    const logo = logos.find(l => l.id === logoId)
+    if (!logo) return
+    const updated = await applyBgRemoval(logo, { aiModel: 'isnet_fp16', ...opts })
     setLogos(prev => prev.map(l => l.id === logoId ? updated : l))
     handleLogoReady(updated)
   }
@@ -625,6 +651,7 @@ export default function DesignCanvas({ product, initialVariantId, jobName, prefi
           onLogoReady={handleLogoReady}
           onLogoRemove={handleLogoRemove}
           onToggleBgRemoval={handleToggleBgRemoval}
+          onReprocessBg={handleReprocessBg}
           onCropLogo={setCropTarget}
           variantId={variantId}
           prefillGoogleUrl={prefill?.googleReviewUrl}
