@@ -36,11 +36,20 @@ Pulled via the Formaloo API + analysed corner/alpha stats with sharp, then eyeba
 - **Conclusion: 11 / 12 need no AI.** Confirms **Option 2**, plus a required new behaviour: **detect an
   existing alpha channel and trim instead of running any model.** AI is the rare fallback.
 
-### Shipped this session (cheap tidy)
-- `frontend/src/App.jsx`: added two external nav tabs - **Fulfillment** (→ jcereports fulfillment console)
-  and **Review link** (→ reviewtaplink.netlify.app), via a new `ExtNavTab` component (opens in a new tab).
-  Tools stay on their own sites so their domain-locked Google keys keep working; **no P0 key change needed.**
-  Frontend build verified clean. Not yet deployed (push `master` to ship).
+### Shipped this session (DEPLOYED to master)
+- **Cheap-tidy links** (`App.jsx`): two external nav tabs - **Fulfillment** (→ jcereports fulfillment
+  console) and **Review link** (→ reviewtaplink.netlify.app), via a new `ExtNavTab` component (new tab).
+  Tools stay on their own sites so their domain-locked Google keys keep working; **no key change needed.**
+  Commit `d08ff55`.
+- **M3 background-removal rebuild** (`lib/logoPipeline.js`, `DesignCanvas.jsx`, `LogoPanel.jsx`): tiered
+  `removeBackgroundSmart` - `auto` = already-transparent→leave / else deterministic knockout / knockout barely
+  clears→AI fallback. Knockout = dominant-border-colour corner flood-fill, preserves interior counters,
+  feathered edge, capped 2000px. AI pinned `isnet_fp16`. LogoPanel: edge-sensitivity slider + AI/knockout
+  switch + method label. Algorithm validated on the 12 real logos (clean cuts on OGA/Umndeni/King Chicken;
+  iThreesixty vignette auto-routes to AI). Commit `e8c5388`. Both deploys smoke-tested: `/r/Z6Ja6AD` 302s,
+  bogus code 404s (sacred path intact).
+- **Left for Jacques:** verify the BG toggle/slider in the live editor on a real order (auth-walled, couldn't
+  drive it headless). Full fulfillment port (M1-M2) stays deferred per the hardened decision.
 
 ---
 

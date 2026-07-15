@@ -430,6 +430,24 @@ through `bg-brand-*`/`text-brand-*` Tailwind classes and recolored automatically
 
 ---
 
+## Background removal (rebuilt 2026-07-14 — tiered, knockout-first)
+`lib/logoPipeline.js` no longer runs the AI model on every logo. A test of 12 real Formaloo
+intake logos found ~11/12 need no AI (≈5 are already-transparent PNGs the model *degrades*,
+≈6 are flat logos on a solid background). New entry point `removeBackgroundSmart(src, {method})`:
+- `method:'auto'` (default, used by the LogoPanel toggle + canvas right-click): already-transparent
+  (>12% transparent px)? return unchanged. Else run the deterministic **knockout**. If knockout
+  clears <4% of pixels (soft vignette / photo — the background wasn't a clean solid), **fall back to AI**.
+- `knockoutBackground()`: corner flood-fill from the **dominant border colour** (16-bucket histogram
+  mode, robust to a logo touching one edge / a JPEG vignette), 4-connectivity within `tolerance`, so
+  interior counters (white inside an "O") are preserved. Feathered boundary. Runs at ≤2000px (the placed
+  logo on a 120×140mm stand is <500px, so this is ample and keeps the flood fast). Returns `{src, cleared}`.
+- `removeBg()` (AI) still exists, pinned to `model:'isnet_fp16'`, still a **lazy import** (Gotcha #11).
+  Knockout is pure-canvas → static import, fine.
+The pipeline in `DesignCanvas` (`applyBgRemoval`/`handleToggleBgRemoval`/`handleReprocessBg`) still
+composes originalSrc → removed → crop, caching the uncropped removed image in `bgRemovedFullSrc`; it now
+also stores `bgMethodUsed` ('knockout'|'ai'|'none') + `bgTolerance`. `LogoPanel` shows a method label, an
+edge-sensitivity slider (re-runs knockout on release via `onReprocessBg`), and an AI↔knockout switch.
+
 ## Custom domain / QR hosting reliability (qr.reviewtap.co.za)
 Goal: a scanned QR must redirect fast and never time out.
 - **DNS**: production QR domain is **`link.reviewtap.co.za`** (CNAME → Netlify site, added as a
