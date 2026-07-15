@@ -4,6 +4,7 @@ import express from 'express'
 import { nanoid } from 'nanoid'
 import { getDesign, setOrderStatus } from '../services/database.js'
 import { fetchOrder } from '../services/formaloo.js'
+import { getManualOrder } from '../services/manualOrders.js'
 import {
   createApproval, getApproval, uploadMockup, supersedeForDesigns,
 } from '../services/approvals.js'
@@ -29,14 +30,24 @@ router.post('/', async (req, res) => {
     const { items, ownerSlug } = req.body
     if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'items required' })
 
-    // Enrich client details from the linked Formaloo order when not supplied
+    // Enrich client details from the linked order when not supplied. Manual
+    // orders (slug `manual_…`) live in our own table, not Formaloo — querying
+    // Formaloo for them returns nothing, which silently dropped the WhatsApp
+    // number and hid the auto-send button. Route to the right source by slug.
     let { clientName, whatsapp, orderNumber } = req.body
     if (ownerSlug && (!clientName || !whatsapp)) {
       try {
-        const order = await fetchOrder(ownerSlug)
-        clientName  = clientName  || order?.companyName
-        whatsapp    = whatsapp    || order?.whatsapp
-        orderNumber = orderNumber || order?.orderNumber
+        if (ownerSlug.startsWith('manual_')) {
+          const m = await getManualOrder(ownerSlug)
+          clientName  = clientName  || m?.company_name
+          whatsapp    = whatsapp    || m?.whatsapp
+          orderNumber = orderNumber || m?.order_number
+        } else {
+          const order = await fetchOrder(ownerSlug)
+          clientName  = clientName  || order?.companyName
+          whatsapp    = whatsapp    || order?.whatsapp
+          orderNumber = orderNumber || order?.orderNumber
+        }
       } catch { /* order enrichment is best-effort */ }
     }
 
