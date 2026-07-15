@@ -1,13 +1,11 @@
 import { useState } from 'react'
-import { apiFetch } from '../lib/api.js'
+import GhlSendConfirm from './GhlSendConfirm.jsx'
 
 // Shown right after an approval link is created: share via WhatsApp (wa.me
 // deep link — primary), copy the link, or auto-send via the Reviewtap System
-// (appears only once the GHL WhatsApp template is configured).
+// (appears only once the GHL WhatsApp template is configured — confirmation-gated).
 export default function ApprovalShareModal({ result, clientName, onClose }) {
-  const [copied,  setCopied]  = useState(false)
-  const [ghlBusy, setGhlBusy] = useState(false)
-  const [ghlMsg,  setGhlMsg]  = useState(null)
+  const [copied, setCopied] = useState(false)
 
   async function copyLink() {
     try {
@@ -15,18 +13,6 @@ export default function ApprovalShareModal({ result, clientName, onClose }) {
       setCopied(true)
       setTimeout(() => setCopied(false), 2500)
     } catch { /* the visible input is selectable as fallback */ }
-  }
-
-  async function sendViaGhl() {
-    setGhlBusy(true); setGhlMsg(null)
-    try {
-      const res = await apiFetch(`/api/approvals/${result.token}/send-ghl`, { method: 'POST' })
-      const d = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(d.error || 'send failed')
-      setGhlMsg({ type: 'ok', text: 'Sent via the Reviewtap System — logged on the contact.' })
-    } catch (err) {
-      setGhlMsg({ type: 'err', text: err.message })
-    } finally { setGhlBusy(false) }
   }
 
   return (
@@ -55,12 +41,13 @@ export default function ApprovalShareModal({ result, clientName, onClose }) {
         </a>
 
         {result.ghlAvailable && (
-          <button className="btn-secondary w-full justify-center" onClick={sendViaGhl} disabled={ghlBusy}>
-            {ghlBusy ? 'Sending…' : 'Auto-send via Reviewtap System'}
-          </button>
-        )}
-        {ghlMsg && (
-          <p className={`text-xs ${ghlMsg.type === 'ok' ? 'text-brand-600' : 'text-red-500'}`}>{ghlMsg.text}</p>
+          <GhlSendConfirm
+            endpoint={`/api/approvals/${result.token}/send-ghl`}
+            title="Send the automated approval WhatsApp?"
+            recipientName={clientName}
+            waUrl={result.waUrl}
+            whatFires="They'll get the approved design-approval template with the approval link."
+          />
         )}
       </div>
     </div>

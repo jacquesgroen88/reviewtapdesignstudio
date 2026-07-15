@@ -1,14 +1,12 @@
 import { useState } from 'react'
-import { apiFetch } from '../lib/api.js'
+import GhlSendConfirm from './GhlSendConfirm.jsx'
 
 // Shown right after a logo-request link is created: share via WhatsApp
 // (wa.me deep link — only offered when we know a phone number), copy the
 // link, or auto-send via the Reviewtap System (appears only once the GHL
-// logo-request workflow is configured). Manual options always stay.
+// logo-request workflow is configured — confirmation-gated). Manual options stay.
 export default function LogoRequestShareModal({ result, companyName, hasPhone, onClose }) {
   const [copied, setCopied] = useState(false)
-  const [ghlBusy, setGhlBusy] = useState(false)
-  const [ghlMsg,  setGhlMsg]  = useState(null)
 
   async function copyLink() {
     try {
@@ -16,18 +14,6 @@ export default function LogoRequestShareModal({ result, companyName, hasPhone, o
       setCopied(true)
       setTimeout(() => setCopied(false), 2500)
     } catch { /* the visible input is selectable as fallback */ }
-  }
-
-  async function sendViaGhl() {
-    setGhlBusy(true); setGhlMsg(null)
-    try {
-      const res = await apiFetch(`/api/logo-requests/${result.token}/send-ghl`, { method: 'POST' })
-      const d = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(d.error || 'send failed')
-      setGhlMsg({ type: 'ok', text: 'Sent via the Reviewtap System — logged on the contact.' })
-    } catch (err) {
-      setGhlMsg({ type: 'err', text: err.message })
-    } finally { setGhlBusy(false) }
   }
 
   return (
@@ -62,12 +48,13 @@ export default function LogoRequestShareModal({ result, companyName, hasPhone, o
         )}
 
         {result.ghlAvailable && (
-          <button className="btn-secondary w-full justify-center" onClick={sendViaGhl} disabled={ghlBusy}>
-            {ghlBusy ? 'Sending…' : 'Auto-send via Reviewtap System'}
-          </button>
-        )}
-        {ghlMsg && (
-          <p className={`text-xs ${ghlMsg.type === 'ok' ? 'text-brand-600' : 'text-red-500'}`}>{ghlMsg.text}</p>
+          <GhlSendConfirm
+            endpoint={`/api/logo-requests/${result.token}/send-ghl`}
+            title="Send the automated logo-request WhatsApp?"
+            recipientName={companyName}
+            waUrl={result.waUrl}
+            whatFires="They'll get the logo-request template with the upload link."
+          />
         )}
       </div>
     </div>
