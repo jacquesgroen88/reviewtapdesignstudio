@@ -249,6 +249,20 @@ export default function App() {
                 </svg>
                 Activity
               </NavTab>
+              {/* External fulfillment tools (hosted separately; open in a new tab). Full in-app
+                  port is specced but deferred — see 2026-07-14-fulfillment-and-bgremoval-spec.md. */}
+              <ExtNavTab href="https://jcereports.netlify.app/clients/reviewtap/reports/2026-06-11-fulfillment-console/">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 7h-9M14 17H5M17 3l3 3-3 3M7 21l-3-3 3-3"/>
+                </svg>
+                Fulfillment
+              </ExtNavTab>
+              <ExtNavTab href="https://reviewtaplink.netlify.app/">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                </svg>
+                Review link
+              </ExtNavTab>
               {isAdmin && (
                 <NavTab to="/team" onClick={guardedNavClick}>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -397,5 +411,20 @@ function NavTab({ to, end, onClick, children }) {
         ${isActive ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>
       {children}
     </NavLink>
+  )
+}
+
+// External tool link, styled like a NavTab but opening a separate app in a new tab.
+// Used for the fulfillment console + review-link generator, which live on their own
+// Netlify sites (kept there so their Google keys stay domain-locked and working).
+function ExtNavTab({ href, children }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer"
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors duration-150 text-gray-500 hover:text-gray-700 hover:bg-gray-50">
+      {children}
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-50">
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+      </svg>
+    </a>
   )
 }
