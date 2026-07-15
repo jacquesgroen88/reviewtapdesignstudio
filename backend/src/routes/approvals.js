@@ -108,7 +108,7 @@ router.post('/:token/send-ghl', async (req, res) => {
     if (!approval) return res.status(404).json({ error: 'Not found' })
     if (!approval.whatsapp) return res.status(400).json({ error: 'No WhatsApp number on this approval' })
     const url = `${PUBLIC_BASE()}/approve/${approval.token}`
-    const contact = await sendApprovalViaGhl({ clientName: approval.client_name, phone: approval.whatsapp, url })
+    const contact = await sendApprovalViaGhl({ clientName: approval.client_name, phone: approval.whatsapp, url, orderNumber: approval.order_number })
     res.json({ ok: true, contactId: contact.id })
   } catch (err) {
     console.error('GHL send failed:', err.response?.data || err.message)

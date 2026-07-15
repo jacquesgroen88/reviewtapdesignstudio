@@ -22,6 +22,7 @@ export async function handler() {
           clientName: a.client_name,
           phone: a.whatsapp,
           url: `${process.env.PUBLIC_URL || 'https://link.reviewtap.co.za'}/approve/${a.token}`,
+          orderNumber: a.order_number,
         })
         await markReminded(a.token)
         sent++

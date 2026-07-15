@@ -56,7 +56,7 @@ router.post('/:token/send-ghl', async (req, res) => {
     if (!order) return res.status(404).json({ error: 'Not found' })
     if (!order.whatsapp) return res.status(400).json({ error: 'No WhatsApp number on this order' })
     const url = `${PUBLIC_BASE()}/logo-request/${order.request_token}`
-    const contact = await sendLogoRequestViaGhl({ clientName: order.company_name, phone: order.whatsapp, url })
+    const contact = await sendLogoRequestViaGhl({ clientName: order.company_name, phone: order.whatsapp, url, orderNumber: order.order_number })
     logActivity({
       actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null,
       action: 'logoRequest.sent', targetType: 'order', targetId: order.row_slug, targetLabel: order.company_name,

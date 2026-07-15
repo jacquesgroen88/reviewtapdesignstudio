@@ -49,15 +49,29 @@ export function normalizePhone(raw) {
 
 // Find-or-create by phone, writing the link into the given custom field so
 // the WhatsApp template can resolve it (Jacques-approved default: auto-create).
-export async function upsertContact({ name, phone, customFields }) {
+// firstName is set so the templates' {{contact.first_name}} greeting resolves.
+export async function upsertContact({ name, firstName, phone, customFields }) {
   const res = await axios.post(`${BASE}/contacts/upsert`, {
     locationId: process.env.GHL_LOCATION_ID,
     phone: normalizePhone(phone),
     name: name || undefined,
+    firstName: firstName || undefined,
     ...(customFields ? { customFields } : {}),
   }, { headers: headers(), timeout: 15000 })
   return res.data?.contact ?? res.data
 }
+
+// Build the customFields payload for a template send: the link field plus
+// order_number (both templates greet with #{{contact.order_number}}). Verified
+// against the wire that GHL accepts { key, field_value } with the bare fieldKey.
+function templateFields(linkKey, url, orderNumber) {
+  const fields = [{ key: linkKey, field_value: url }]
+  if (orderNumber != null && String(orderNumber).trim()) {
+    fields.push({ key: 'order_number', field_value: String(orderNumber).trim() })
+  }
+  return fields
+}
+const firstNameOf = (s) => (String(s || '').trim().split(/\s+/)[0] || undefined)
 
 export async function addToWorkflow(contactId, workflowId) {
   const res = await axios.post(`${BASE}/contacts/${contactId}/workflow/${workflowId}`, {}, { headers: headers(), timeout: 15000 })
@@ -66,10 +80,10 @@ export async function addToWorkflow(contactId, workflowId) {
 
 // Approval: write the approval URL to rt_studio_link, enroll in the approval
 // workflow (which sends the design_approval WhatsApp template).
-export async function sendApprovalViaGhl({ clientName, phone, url }) {
+export async function sendApprovalViaGhl({ clientName, phone, url, orderNumber }) {
   const contact = await upsertContact({
-    name: clientName, phone,
-    customFields: [{ key: 'rt_studio_link', field_value: url }],
+    name: clientName, firstName: firstNameOf(clientName), phone,
+    customFields: templateFields('rt_studio_link', url, orderNumber),
   })
   await addToWorkflow(contact.id, process.env.GHL_APPROVAL_WORKFLOW_ID)
   return contact
@@ -77,10 +91,10 @@ export async function sendApprovalViaGhl({ clientName, phone, url }) {
 
 // Logo request: write the upload URL to rt_logo_upload, enroll in the
 // logo-request workflow (which sends the logo_request WhatsApp template).
-export async function sendLogoRequestViaGhl({ clientName, phone, url }) {
+export async function sendLogoRequestViaGhl({ clientName, phone, url, orderNumber }) {
   const contact = await upsertContact({
-    name: clientName, phone,
-    customFields: [{ key: 'rt_logo_upload', field_value: url }],
+    name: clientName, firstName: firstNameOf(clientName), phone,
+    customFields: templateFields('rt_logo_upload', url, orderNumber),
   })
   await addToWorkflow(contact.id, process.env.GHL_LOGO_WORKFLOW_ID)
   return contact
