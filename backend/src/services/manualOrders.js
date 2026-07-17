@@ -89,19 +89,46 @@ export async function getManualOrderByToken(token) {
   return data
 }
 
-// The public form takes ONE flexible field — a business name as it appears on
-// Google, or a pasted Google review link — since customers have whichever one
-// handy. Anything URL-shaped goes to google_review_url; otherwise company_name.
-export async function fulfillLogoRequest(token, { logoUrl, nameOrLink }) {
+// Two paths in, one row out.
+//
+// 1. PICKED (preferred, 2026-07-17): the customer chose their listing from the
+//    Google Places picker, so we get a canonical name AND a review URL derived
+//    from a real place_id rather than typed. This is what stops customers
+//    entering a business name into a review-link field and printing a QR code
+//    that 404s (three real client QRs needed hand repair before this existed).
+// 2. MANUAL (fallback): the old single flexible field — a name as it appears on
+//    Google, or a pasted review link, since customers have whichever is handy.
+//    Anything URL-shaped goes to google_review_url; otherwise company_name.
+//    Kept deliberately: if Places is unreachable (key, network, WhatsApp's
+//    in-app browser) a typed answer is worth far more than a blocked customer.
+//
+// place_id is intentionally NOT stored: manual_orders has no column for it, and
+// google_review_url encodes it losslessly (the Fulfillment Console already parses
+// it back out with /placeid=([A-Za-z0-9_-]+)/). order_destinations captures it
+// properly later; adding a column here just to drop it then is churn.
+export async function fulfillLogoRequest(token, { logoUrl, nameOrLink, businessName, reviewUrl }) {
   const patch = { logo_url: logoUrl, request_submitted_at: new Date().toISOString() }
-  const trimmed = (nameOrLink || '').trim()
-  if (/^https?:\/\//i.test(trimmed)) patch.google_review_url = trimmed
-  else if (trimmed) patch.company_name = trimmed
+  const picked = (businessName || '').trim()
+  const pickedUrl = (reviewUrl || '').trim()
+  if (picked || pickedUrl) {
+    if (picked) patch.company_name = picked
+    if (pickedUrl) patch.google_review_url = pickedUrl
+  } else {
+    const trimmed = (nameOrLink || '').trim()
+    if (/^https?:\/\//i.test(trimmed)) patch.google_review_url = trimmed
+    else if (trimmed) patch.company_name = trimmed
+  }
   const { data, error } = await getClient().from('manual_orders').update(patch).eq('request_token', token).select().single()
   if (error) throw error
   logActivity({
     actorType: 'client', actorLabel: data.company_name || null,
     action: 'logo.uploaded', targetType: 'order', targetId: data.row_slug, targetLabel: data.company_name || null,
+    // Which path the customer actually took. 'places' = a verified review URL
+    // derived from a picked listing; 'manual' = typed, and therefore still
+    // capable of the business-name-in-a-URL-field problem. If manual stays high
+    // in the wild, the picker is failing somewhere we cannot see (most likely
+    // WhatsApp's in-app browser) — that is the signal, not an assumption.
+    metadata: { via: (picked || pickedUrl) ? 'places' : 'manual' },
   })
   return data
 }

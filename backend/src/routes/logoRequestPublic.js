@@ -26,10 +26,12 @@ router.post('/:token/submit', async (req, res) => {
   try {
     const order = await getManualOrderByToken(req.params.token)
     if (!order) return res.status(404).json({ error: 'Not found' })
-    const { logo, nameOrLink } = req.body || {}
+    // businessName/reviewUrl = the Places-picker path; nameOrLink = the manual
+    // fallback. TWIN of netlify/functions/logo-request.js — keep in step.
+    const { logo, nameOrLink, businessName, reviewUrl } = req.body || {}
     if (!logo) return res.status(400).json({ error: 'logo required' })
     const logoUrl = await uploadLogo(order.row_slug, logo)
-    await fulfillLogoRequest(req.params.token, { logoUrl, nameOrLink })
+    await fulfillLogoRequest(req.params.token, { logoUrl, nameOrLink, businessName, reviewUrl })
     res.json({ ok: true })
   } catch (err) {
     res.status(400).json({ error: err.message })

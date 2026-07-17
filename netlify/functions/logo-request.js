@@ -17,10 +17,14 @@ export async function handler(event) {
     try {
       const order = await getManualOrderByToken(token)
       if (!order) return json(404, { error: 'Not found' })
-      const { logo, nameOrLink } = JSON.parse(event.body || '{}')
+      // businessName/reviewUrl = the Places-picker path; nameOrLink = the manual
+      // fallback. TWIN of backend/src/routes/logoRequestPublic.js — keep in step.
+      // This is the file that runs in PRODUCTION; omitting a field here means the
+      // picker works locally and silently degrades to manual on the live site.
+      const { logo, nameOrLink, businessName, reviewUrl } = JSON.parse(event.body || '{}')
       if (!logo) return json(400, { error: 'logo required' })
       const logoUrl = await uploadLogo(order.row_slug, logo)
-      await fulfillLogoRequest(token, { logoUrl, nameOrLink })
+      await fulfillLogoRequest(token, { logoUrl, nameOrLink, businessName, reviewUrl })
       return json(200, { ok: true })
     } catch (err) {
       return json(400, { error: err.message })

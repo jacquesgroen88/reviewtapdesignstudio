@@ -13,6 +13,21 @@ const API_VERSION    = '2026-07'
 // tool needs to design for.
 const CUSTOM_TITLE_RE = /custom/i
 
+// "Custom Smart Business Card" and "Custom Branded Google Review Card" BOTH match
+// /custom/i and /card/i, so a single requiresCard flag conflated two products with
+// genuinely different needs (2026-07-17):
+//   - Review Card  → print artwork only (logo + listing)
+//   - Smart Card   → print artwork AND a digital landing page, which lives in a
+//                    different app entirely (cards.reviewtap.co.za/new)
+// That conflation is a plausible cause of the smart card having no fixed intake
+// process at all. Split them so /setup can route the handoff. Order of the tests
+// matters: smart-card is checked first and excluded from the review-card test.
+const SMART_CARD_RE = /smart\s+business\s+card/i
+const isSmartCard  = li => SMART_CARD_RE.test(li.title)
+const isReviewCard = li => /card/i.test(li.title) && !SMART_CARD_RE.test(li.title)
+const isStand      = li => /stand/i.test(li.title)
+const sumQty = (items, pred) => items.filter(pred).reduce((sum, li) => sum + li.quantity, 0)
+
 let tokenCache = { value: null, expiresAt: 0 }
 
 async function getToken() {
@@ -71,10 +86,23 @@ export async function fetchOpenShopifyOrders({ force = false } = {}) {
     const customLineItems = lineItems.filter(li => CUSTOM_TITLE_RE.test(li.title))
     byNumber[orderNumber] = {
       orderNumber,
+      // Sum of every custom line item. KEPT as-is: the missing-logo banner and
+      // the order card both read it, and it means "units needing design work".
       quantity: customLineItems.reduce((sum, li) => sum + li.quantity, 0),
       requiresLogo: customLineItems.length > 0,
-      requiresStand: customLineItems.some(li => /stand/i.test(li.title)),
+      requiresStand: customLineItems.some(isStand),
+      // UNCHANGED MEANING, deliberately: still true for either card product, so
+      // every existing caller behaves exactly as before. The new flags below are
+      // additive — nothing reading requiresCard today needs to know about the split.
       requiresCard: customLineItems.some(li => /card/i.test(li.title)),
+      requiresSmartCard: customLineItems.some(isSmartCard),
+      requiresReviewCard: customLineItems.some(isReviewCard),
+      // Per-type quantities: the destination allocator on /setup needs to know
+      // "3 stands and 2 cards", not just "5 things". The summed `quantity` above
+      // cannot answer that.
+      qtyStand: sumQty(customLineItems, isStand),
+      qtyReviewCard: sumQty(customLineItems, isReviewCard),
+      qtySmartCard: sumQty(customLineItems, isSmartCard),
       financialStatus: node.displayFinancialStatus,
       fulfillmentStatus: node.displayFulfillmentStatus,
       shopifyCreatedAt: node.createdAt,
