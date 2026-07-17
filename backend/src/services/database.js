@@ -100,6 +100,43 @@ export async function getAllOrderStatuses() {
   return data ?? []
 }
 
+// ── Order overrides (studio corrections over read-only Formaloo rows) ─────────
+
+// row_slug → { company_name, whatsapp, order_number }. Tiny table; one read
+// serves the whole Orders list, same shape as the other lookup maps here.
+export async function getOrderOverrides() {
+  const { data, error } = await getClient()
+    .from('order_overrides').select('row_slug, company_name, whatsapp, order_number')
+  if (error) throw error
+  return Object.fromEntries((data ?? []).map(o => [o.row_slug, o]))
+}
+
+export async function getOrderOverride(rowSlug) {
+  const { data } = await getClient()
+    .from('order_overrides').select('*').eq('row_slug', rowSlug).maybeSingle()
+  return data
+}
+
+// Upsert. Only the keys PRESENT in `fields` are written, so a caller can correct
+// the name without touching the number — unlike the manual-order PATCH, which is
+// a full field-replace where omitting a field nulls it (a known footgun).
+// An explicit null clears the override and falls back to the Formaloo value.
+export async function setOrderOverride(rowSlug, fields, updatedBy = null) {
+  const row = { row_slug: rowSlug, updated_at: new Date().toISOString(), updated_by: updatedBy }
+  for (const k of ['company_name', 'whatsapp', 'order_number']) {
+    if (k in fields) row[k] = fields[k]
+  }
+  const { data, error } = await getClient()
+    .from('order_overrides').upsert(row, { onConflict: 'row_slug' }).select().single()
+  if (error) throw error
+  return data
+}
+
+export async function deleteOrderOverride(rowSlug) {
+  const { error } = await getClient().from('order_overrides').delete().eq('row_slug', rowSlug)
+  if (error) throw error
+}
+
 // ── Saved designs ─────────────────────────────────────────────────────────────
 
 // ── Designs (first-class, reusable; an order/job can have many) ───────────────

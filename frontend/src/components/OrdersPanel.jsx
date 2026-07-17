@@ -6,8 +6,10 @@ import { createLogoRequest } from '../lib/logoRequest.js'
 import ApprovalShareModal from './ApprovalShareModal.jsx'
 import LogoRequestShareModal from './LogoRequestShareModal.jsx'
 import ManualOrderModal from './ManualOrderModal.jsx'
+import OrderDetailsModal from './OrderDetailsModal.jsx'
 import OrderHistory, { LastContactLine } from './OrderHistory.jsx'
 import { logShare } from '../lib/shareLog.js'
+import { displayOrderNumber } from '../lib/orderNumber.js'
 
 const STATUS_LABELS = {
   pending:          { label: 'Pending',          color: 'bg-amber-100 text-amber-700' },
@@ -58,6 +60,7 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
   const [search,      setSearch]      = useState('')   // input value
   const [searchTerm,  setSearchTerm]  = useState('')   // debounced, sent to backend
   const [manualModal, setManualModal] = useState(null)   // {mode:'new'} | {mode:'edit', order} | null
+  const [detailsModal, setDetailsModal] = useState(null) // Formaloo order whose client details are being corrected
   const [missingLogo, setMissingLogo] = useState([])
   const [missingLogoOpen, setMissingLogoOpen] = useState(false)
   const [logoRequestResult, setLogoRequestResult] = useState(null)   // {result, companyName, hasPhone} → share modal
@@ -147,10 +150,14 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
     }
   }
 
-  const load = useCallback(async () => {
+  // `force` bypasses the backend's 60s Formaloo row cache. Only the explicit
+  // Refresh button sets it — otherwise a Refresh click would return the same
+  // cached rows and the button would be a lie. Normal tab/search loads ride the
+  // cache, which is the whole point (Formaloo takes ~9s per 500-row fetch).
+  const load = useCallback(async (force = false) => {
     setLoading(true); setError(null)
     try {
-      const qs = `filter=${filter}&page=${page}&pageSize=${PAGE_SIZE}&search=${encodeURIComponent(searchTerm)}`
+      const qs = `filter=${filter}&page=${page}&pageSize=${PAGE_SIZE}&search=${encodeURIComponent(searchTerm)}${force ? '&refresh=1' : ''}`
       const res = await apiFetch(`/api/orders?${qs}`)
       if (!res.ok) throw new Error(await res.text())
       const data = await res.json()
@@ -250,7 +257,7 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             New order
           </button>
-          <button onClick={load} className="btn-ghost text-sm" disabled={loading}>
+          <button onClick={() => load(true)} className="btn-ghost text-sm" disabled={loading}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
               className={loading ? 'animate-spin' : ''}>
               <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
@@ -265,6 +272,18 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
           initial={manualModal.order || null}
           onClose={() => setManualModal(null)}
           onSaved={() => { setManualModal(null); load(); refreshMissingLogo() }}
+        />
+      )}
+
+      {detailsModal && (
+        <OrderDetailsModal
+          order={detailsModal}
+          onClose={() => setDetailsModal(null)}
+          // Plain load(), NOT load(true): the Formaloo cache holds the customer's
+          // raw rows, while overrides are read fresh from the DB on every load
+          // and applied on top. So the correction shows immediately and we skip
+          // a pointless ~2.4s refetch of data that didn't change.
+          onSaved={() => { setDetailsModal(null); load() }}
         />
       )}
 
@@ -384,6 +403,7 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
                 onSendApproval={() => sendApproval(order)}
                 isSendingApproval={sendingApproval === order.rowSlug}
                 onEditManual={() => setManualModal({ mode: 'edit', order })}
+                onEditDetails={() => setDetailsModal(order)}
                 onDeleteManual={() => deleteManualOrder(order)}
                 onRequestLogo={() => requestLogoForOrder(order)}
                 onRequestLogoWhatsapp={() => requestLogoViaWhatsapp(order)}
@@ -429,7 +449,7 @@ function ApprovalChip({ approval }) {
   return <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full shrink-0 ${cls}`} title={title}>{text}</span>
 }
 
-function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdating, onSendApproval, isSendingApproval, onEditManual, onDeleteManual, onRequestLogo, onRequestLogoWhatsapp, isRequestingLogo, onLogFollowUp }) {
+function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdating, onSendApproval, isSendingApproval, onEditManual, onEditDetails, onDeleteManual, onRequestLogo, onRequestLogoWhatsapp, isRequestingLogo, onLogFollowUp }) {
   const [expanded, setExpanded] = useState(false)
   const status = STATUS_LABELS[order.status] ?? STATUS_LABELS.pending
   const canDesign = order.orderedStand || order.orderedCard
@@ -450,7 +470,7 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
             {isManual && <span className="ml-1.5 text-xs font-medium px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 align-middle">Manual</span>}
           </p>
           <p className="text-xs text-gray-400 mt-0.5">
-            {order.orderNumber ? <>#{order.orderNumber}</> : (isManual ? 'no order #' : null)}
+            {order.orderNumber ? displayOrderNumber(order.orderNumber) : (isManual ? 'no order #' : null)}
             {order.submittedAt && <> · {new Date(order.submittedAt).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })}</>}
             {(order.orderedStand || order.orderedCard) && (
               <> · ordered {[order.orderedStand && 'Stand', order.orderedCard && 'Card'].filter(Boolean).join(' + ')}</>
@@ -464,16 +484,23 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
             </p>
           )}
         </div>
-        {isManual && (
-          <div className="flex items-center gap-1 shrink-0">
-            <button onClick={onEditManual} title="Edit this order" className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-300 hover:text-gray-600 hover:bg-gray-100">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-            </button>
+        <div className="flex items-center gap-1 shrink-0">
+          {/* Edit is available on EVERY order now, not just manual ones. A
+              Formaloo order opens the client-details modal (a correction layered
+              over the read-only submission); a manual order opens its own full
+              editor. Before this, a Formaloo order's client name could not be
+              touched even though it's what the client is greeted by. */}
+          <button onClick={isManual ? onEditManual : onEditDetails}
+            title={isManual ? 'Edit this order' : 'Correct the client name / WhatsApp / order number'}
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-300 hover:text-gray-600 hover:bg-gray-100">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          {isManual && (
             <button onClick={onDeleteManual} title="Delete this order" className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-300 hover:text-red-400 hover:bg-red-50">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg>
             </button>
-          </div>
-        )}
+          )}
+        </div>
         <div className="shrink-0">
           <StatusDropdown current={order.status} onChange={onStatusChange} loading={isUpdating} />
         </div>

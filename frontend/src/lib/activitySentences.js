@@ -16,6 +16,8 @@ const STATUS_TEXT = {
 
 const CHANNEL_TEXT = { whatsapp: 'their own WhatsApp', copy: 'a copied link' }
 
+const FIELD_TEXT = { company_name: 'name', whatsapp: 'WhatsApp', order_number: 'order #' }
+
 // action → sentence fragment (goes after the actor's name). Keep these terse —
 // the row already carries the target label and a timestamp.
 //
@@ -67,6 +69,11 @@ export const SENTENCES = {
   'logoRequest.shared':        e => `opened ${CHANNEL_TEXT[e.metadata?.channel] || 'a share'} to send the logo request, outside the Reviewtap System`,
 
   'order.follow_up_logged':    e => `logged a follow-up${e.metadata?.text ? `: "${e.metadata.text}"` : ''}`,
+
+  // Client details feed the WhatsApp greeting and the GHL contact name, so a
+  // change to them is worth seeing in the history.
+  'order.details_corrected':   e => `corrected the client details for ${e.targetLabel || 'an order'}${e.metadata?.fields?.length ? ` (${e.metadata.fields.map(f => FIELD_TEXT[f] || f).join(', ')})` : ''}`,
+  'order.details_reverted':    e => `reverted ${e.targetLabel || 'an order'} to the customer's original details`,
 }
 
 // Actions that mean a client was actually reached, or that we tried to reach

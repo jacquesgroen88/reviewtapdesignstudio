@@ -2,7 +2,7 @@
 // The CLIENT-facing page lives on the public /approve/:token route instead.
 import express from 'express'
 import { nanoid } from 'nanoid'
-import { getDesign, setOrderStatus } from '../services/database.js'
+import { getDesign, setOrderStatus, getOrderOverride } from '../services/database.js'
 import { fetchOrder } from '../services/formaloo.js'
 import { getManualOrder } from '../services/manualOrders.js'
 import {
@@ -10,6 +10,7 @@ import {
 } from '../services/approvals.js'
 import { ghlConfigured, sendApprovalViaGhl, normalizePhone } from '../services/ghl.js'
 import { logActivity } from '../services/activityLog.js'
+import { orderLabel, bareOrderNumber } from '../lib/orderNumber.js'
 
 const router = express.Router()
 
@@ -18,7 +19,7 @@ const PUBLIC_BASE = () => process.env.PUBLIC_URL || 'https://link.reviewtap.co.z
 function buildWaUrl({ whatsapp, clientName, orderNumber, url, count }) {
   const phone = normalizePhone(whatsapp)
   const plural = count > 1
-  const msg = `Hi ${clientName || 'there'}, your ReviewTap design${plural ? 's are' : ' is'} ready to view!${orderNumber ? ` (Order #${orderNumber})` : ''} Open the link to approve or request changes: ${url}`
+  const msg = `Hi ${clientName || 'there'}, your ReviewTap design${plural ? 's are' : ' is'} ready to view!${bareOrderNumber(orderNumber) ? ` (Order #${bareOrderNumber(orderNumber)})` : ''} Open the link to approve or request changes: ${url}`
   const base = phone ? `https://wa.me/${phone.replace('+', '')}` : 'https://wa.me/'
   return `${base}?text=${encodeURIComponent(msg)}`
 }
@@ -43,10 +44,18 @@ router.post('/', async (req, res) => {
           whatsapp    = whatsapp    || m?.whatsapp
           orderNumber = orderNumber || m?.order_number
         } else {
-          const order = await fetchOrder(ownerSlug)
-          clientName  = clientName  || order?.companyName
-          whatsapp    = whatsapp    || order?.whatsapp
-          orderNumber = orderNumber || order?.orderNumber
+          // A studio correction must win over the raw Formaloo submission here
+          // too, not just in the Orders list. Without this, an approval created
+          // without an explicit clientName would fall back to whatever the
+          // customer typed and greet them with it — exactly the order-1820 bug
+          // the overrides exist to fix.
+          const [order, override] = await Promise.all([
+            fetchOrder(ownerSlug),
+            getOrderOverride(ownerSlug).catch(() => null),
+          ])
+          clientName  = clientName  || override?.company_name || order?.companyName
+          whatsapp    = whatsapp    || override?.whatsapp     || order?.whatsapp
+          orderNumber = orderNumber || override?.order_number || order?.orderNumber
         }
       } catch { /* order enrichment is best-effort */ }
     }
@@ -79,7 +88,7 @@ router.post('/', async (req, res) => {
     const approval = await createApproval({
       token,
       owner_slug: ownerSlug || null,
-      order_number: (orderNumber || '').toString().replace(/^#/, '') || null,
+      order_number: bareOrderNumber(orderNumber) || null,
       client_name: clientName || null,
       whatsapp: whatsapp || null,
       items: storedItems,
@@ -95,7 +104,7 @@ router.post('/', async (req, res) => {
     logActivity({
       actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null,
       action: 'approval.link_created', targetType: 'order', targetId: ownerSlug || token,
-      targetLabel: clientName ? `${clientName}${orderNumber ? ` (#${orderNumber})` : ''}` : null,
+      targetLabel: orderLabel(clientName, orderNumber),
       metadata: { designCount: storedItems.length },
     })
 

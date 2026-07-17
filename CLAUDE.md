@@ -393,6 +393,64 @@ client Giorgio already chased. Spec: `2026-07-17-order-history-spec.md`. Reads t
 - `lib/activitySentences.js` is the SHARED vocabulary for `/activity` and the card timeline, so
   the two can't describe the same event differently. Add new actions there, not in a component.
 
+## Orders performance (fixed 2026-07-17) — read before touching this path
+The Orders tab took **~13s** on every tab switch and every search. Two causes, both
+now fixed. Measured, not guessed — re-measure before "optimising" anything here.
+
+1. **`approvalSummaryByDesign` selected `approvals.items` — 46 MB — to build an 8 KB map.**
+   `items` carries each design's full canvas snapshot (the version lock): 46 MB across 77
+   approvals, one row **5.4 MB**. All of it crossed the wire on every request and was thrown
+   away. **12.9s.** Now an RPC (`approval_summary_by_design()`) does the flattening in
+   Postgres: **~0.26s warm**. Verified byte-identical to the old output before shipping
+   (`responded_at` is deliberately returned as TEXT, not timestamptz, to match exactly).
+   **Never add the snapshot to that projection** — fetch the one approval you need by token.
+2. **Formaloo was uncached and fetched the worst possible way.** Their API is slow PER
+   REQUEST, not per row — measured against the live form:
+   `one 500-row page 8349ms` · `4x100 parallel 3164ms` · `8x50 parallel 2397ms`.
+   The route also used two shapes (50-row pages for `all`, a separate 500-row page for any
+   filter), so browsing cost ~9s and switching to a filter cost ~9s **again**. Now
+   `fetchAllOrders()` pulls page 1, then the rest **concurrently**, and caches the whole
+   form (~400 rows / ~150 KB) for **5 min**; every tab, filter, search and page is an
+   in-memory slice. `?refresh=1` (the Refresh button only) forces a live fetch.
+
+Result: **~270ms warm** for every interaction, ~5s cold. The cache lives in the Netlify
+function container, so it only helps warm containers — a cold start still pays ~2.4s for
+Formaloo. Killing that means syncing Formaloo into Supabase so filtering never touches
+their API. That's the real fix and it is NOT done.
+
+## Order overrides (added 2026-07-17)
+Formaloo submissions are the customer's own words, read-only, and they feed the
+client-facing WhatsApp greeting and the GHL contact name. Order **1820** arrived with
+company_name = `Two (2) Companies: "Witsieshoek Mountain Lodge" and "Thaba Adventures"` and
+the client was greeted with that entire string — with no way to fix it, because only
+manually-entered orders had an edit control.
+- `order_overrides(row_slug, company_name, whatsapp, order_number, ...)`, RLS deny-all like
+  every other table. NULL column = fall back to Formaloo's value.
+- `applyOverride()` in `routes/orders.js` coalesces them inside `enrichOrder`, so ONE
+  correction fixes every surface at once: card, WhatsApp, GHL contact, design names, log
+  labels. The Formaloo submission is never mutated and is kept on `order.original` for the
+  UI to show + revert.
+- **Manual orders deliberately never use this** — they're editable in place via
+  `manual_orders`. One editable home per order.
+- `PUT /api/orders/:rowSlug/override` writes only the keys present in the body (unlike the
+  manual-order PATCH, which is a full replace where omitting a field nulls it).
+  `DELETE` reverts to the customer's original.
+- `routes/approvals.js` also checks the override in its server-side enrichment fallback —
+  otherwise an approval created without an explicit clientName would quietly greet the
+  client with the raw Formaloo string again.
+- Editing a correction only needs `load()`, NOT `load(true)`: overrides are read fresh from
+  the DB every request; only the raw Formaloo rows are cached.
+
+## Order numbers: always normalise (`lib/orderNumber.js`)
+Formaloo sometimes stores `#1812`, sometimes `1810`; Shopify's `order.name` always has the
+`#`; manual entries are whatever was typed. Interpolating `(#${orderNumber})` on top
+produced `##1820` on the card and `King Chicken (##1812)` in the activity log — the same
+family as the missing-logo false positives, where two sides of a comparison stripped `#`
+differently. Use `bareOrderNumber()` / `displayOrderNumber()` / `orderLabel()`.
+**`backend/src/lib/orderNumber.js` and `frontend/src/lib/orderNumber.js` are deliberate
+twins** (separate bundles, no shared import path) — keep them in step, same trap as the
+proxy-image allowlist.
+
 ## Environment variables (set in Netlify → Site settings → Env vars)
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY` (or `SUPABASE_SERVICE_KEY`)
 - `FORMALOO_API_KEY`, `FORMALOO_API_SECRET`, `FORMALOO_FORM_SLUG=CGQse2u9`, `FORMALOO_WORKSPACE=cHQuChHR`

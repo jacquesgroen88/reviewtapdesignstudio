@@ -1,13 +1,17 @@
 import express from 'express'
 import { nanoid } from 'nanoid'
-import { fetchOrders, fetchOrder } from '../services/formaloo.js'
-import { getOrderStatus, setOrderStatus, getAllOrderStatuses, listDesignsByOwner, getProfileNames } from '../services/database.js'
+import { fetchAllOrders, fetchOrder } from '../services/formaloo.js'
+import {
+  getOrderStatus, setOrderStatus, getAllOrderStatuses, listDesignsByOwner, getProfileNames,
+  getOrderOverrides, setOrderOverride, deleteOrderOverride,
+} from '../services/database.js'
 import { approvalSummaryByDesign } from '../services/approvals.js'
 import {
   listManualOrders, getManualOrder, createManualOrder, updateManualOrder, deleteManualOrder, uploadLogo,
 } from '../services/manualOrders.js'
 import { fetchOpenShopifyOrders } from '../services/shopify.js'
 import { logActivity, listActivityForOrder, getLastContactBySlug } from '../services/activityLog.js'
+import { orderLabel, bareOrderNumber } from '../lib/orderNumber.js'
 
 const router = express.Router()
 
@@ -22,7 +26,37 @@ const VALID_STATUSES = ['pending', 'ready', 'pending_approval', 'pending_print',
 
 // Shared enrichment for BOTH Formaloo and manually-entered orders — one place
 // joins status/designs/approvals so the two sources behave identically.
-function enrichOrder(order, { statusMap, designsMap, names, approvalMap, shopifyMap = {}, contactMap = {} }) {
+// Studio corrections layered over a read-only Formaloo submission. `?? ` not
+// `|| `: an override of '' is an intentional blank and must win, while null
+// means "no override, use what the customer sent".
+//
+// Manual orders are skipped — they're editable in place via manual_orders, so
+// letting an override shadow them would create two editable homes for one field
+// and no clear winner.
+//
+// This is the ONE place corrections are applied, which is why everything
+// downstream (the WhatsApp greeting, the GHL contact name, design names, log
+// labels) gets them for free: they all read the enriched order.
+function applyOverride(order, override) {
+  if (!override || order.source === 'manual') return order
+  return {
+    ...order,
+    companyName: override.company_name ?? order.companyName,
+    whatsapp:    override.whatsapp     ?? order.whatsapp,
+    orderNumber: override.order_number ?? order.orderNumber,
+    // Kept so the UI can show what the customer originally submitted and offer
+    // to revert. Never send these to a client.
+    original: {
+      companyName: order.companyName,
+      whatsapp:    order.whatsapp,
+      orderNumber: order.orderNumber,
+    },
+    isOverridden: true,
+  }
+}
+
+function enrichOrder(rawOrder, { statusMap, designsMap, names, approvalMap, shopifyMap = {}, contactMap = {}, overrideMap = {} }) {
+  const order = applyOverride(rawOrder, overrideMap[rawOrder.rowSlug])
   return {
     ...order,
     status: statusMap[order.rowSlug]?.status ?? (order.orderedStand || order.orderedCard ? 'pending' : 'not_needed'),
@@ -134,17 +168,21 @@ router.get('/', async (req, res) => {
     const filter   = req.query.filter             || 'all'
     const search   = (req.query.search || '').trim().toLowerCase()
 
-    // A specific status/awaiting-logo filter (or a search) needs to scan
-    // beyond one page's chronological window of Formaloo submissions — pull a
-    // large batch and filter in-memory instead of relying on Formaloo's own
-    // pagination, same as search already did.
+    // One shape for every request: the whole form, cached, sliced in memory.
+    // This used to fetch 50-row pages for 'all' and a separate 500-row page for
+    // any filter/search — two Formaloo round-trips of ~9s each, neither cached.
+    // Only the Refresh button forces a live fetch.
     const needsFullScan  = filter !== 'all' || !!search
     const onlyDesignNeeded = filter !== 'all'
-    const fetchPage     = needsFullScan ? 1   : page
-    const fetchPageSize = needsFullScan ? 500 : pageSize
-    const { orders, count } = await fetchOrders({ page: fetchPage, pageSize: fetchPageSize, onlyDesignNeeded })
+    const all = await fetchAllOrders({ force: req.query.refresh === '1' })
+    const sourceOrders = onlyDesignNeeded
+      ? all.orders.filter(o => o.orderedStand || o.orderedCard)
+      : all.orders
+    // 'all' still pages; a filter/search scans everything and pages on the result.
+    const orders = needsFullScan ? sourceOrders : sourceOrders.slice((page - 1) * pageSize, page * pageSize)
+    const count  = all.count
 
-    const [statuses, designsMap, names, approvalMap, manualRaw, shopifyMap, contactMap] = await Promise.all([
+    const [statuses, designsMap, names, approvalMap, manualRaw, shopifyMap, contactMap, overrideMap] = await Promise.all([
       getAllOrderStatuses(), listDesignsByOwner(), getProfileNames(),
       approvalSummaryByDesign().catch(() => ({})),
       listManualOrders().catch(() => []),
@@ -153,9 +191,12 @@ router.get('/', async (req, res) => {
       // fail-soft posture as the other joins: a history hiccup must never take
       // the Orders tab down, it just costs the "Last contacted" line.
       getLastContactBySlug().catch(err => { console.error('last-contact fetch error:', err.message); return {} }),
+      // Fail-soft like the rest: if this read hiccups, the list still renders —
+      // it just shows the customer's original wording for one load.
+      getOrderOverrides().catch(err => { console.error('order overrides fetch error:', err.message); return {} }),
     ])
     const statusMap = Object.fromEntries(statuses.map(s => [s.row_slug, s]))
-    const ctx = { statusMap, designsMap, names, approvalMap, shopifyMap, contactMap }
+    const ctx = { statusMap, designsMap, names, approvalMap, shopifyMap, contactMap, overrideMap }
 
     const enriched = orders.map(order => enrichOrder(order, ctx))
       .filter(o => matchesFilter(o, filter)).filter(o => matchesSearch(o, search))
@@ -175,11 +216,13 @@ router.get('/', async (req, res) => {
       if (filter === 'awaiting_client') result.sort(byStalestContact)
       total = result.length
     } else {
-      result = fetchPage === 1 ? [...manualResult, ...enriched] : enriched
+      // Manual orders aren't part of the paged Formaloo set, so they ride along
+      // on page 1 rather than being sliced into its windows.
+      result = page === 1 ? [...manualResult, ...enriched] : enriched
       total = count + manualResult.length
     }
 
-    res.json({ orders: result, count: total, page: fetchPage, pageSize: fetchPageSize })
+    res.json({ orders: result, count: total, page, pageSize })
   } catch (err) {
     console.error('Orders fetch error:', err.message)
     res.status(500).json({ error: err.message })
@@ -194,7 +237,7 @@ router.get('/missing-logo', async (req, res) => {
   try {
     const [shopifyMap, formalooAll, manualRaw] = await Promise.all([
       fetchOpenShopifyOrders(),
-      fetchOrders({ page: 1, pageSize: 500 }),
+      fetchAllOrders(),
       listManualOrders().catch(() => []),
     ])
     // Normalize away a leading '#' — Formaloo submissions sometimes record it
@@ -235,6 +278,60 @@ router.get('/:rowSlug', async (req, res) => {
 })
 
 // (Design read/write moved to /api/designs — designs are first-class now.)
+
+// ── Order overrides (correct a Formaloo submission's client details) ──────────
+
+// Formaloo rows are the customer's own words and can't be edited at source, but
+// they feed the client-facing WhatsApp and the GHL contact name. This lets the
+// studio correct them without touching the submission.
+//
+// Body keys are OPTIONAL and only the present ones are written (unlike the
+// manual-order PATCH, which is a full replace where omitting a field nulls it).
+// An explicit null reverts that field to the customer's original.
+router.put('/:rowSlug/override', async (req, res) => {
+  try {
+    const fields = {}
+    for (const [key, col] of [['companyName', 'company_name'], ['whatsapp', 'whatsapp'], ['orderNumber', 'order_number']]) {
+      if (key in (req.body || {})) {
+        const v = req.body[key]
+        // null = revert to Formaloo's value. A string is trimmed; a blank string
+        // is treated as "revert" too, since an intentionally empty client name
+        // isn't a thing anyone wants sent.
+        fields[col] = v === null ? null : (String(v).trim() || null)
+      }
+    }
+    if (!Object.keys(fields).length) return res.status(400).json({ error: 'nothing to update' })
+
+    const row = await setOrderOverride(req.params.rowSlug, fields, req.user?.id || null)
+    logActivity({
+      ...actorFrom(req), action: 'order.details_corrected', targetType: 'order',
+      targetId: req.params.rowSlug, targetLabel: row.company_name || req.params.rowSlug,
+      metadata: { fields: Object.keys(fields) },
+    })
+    // Client details feed the WhatsApp greeting — worth seeing who changed them.
+    res.json({
+      rowSlug: row.row_slug,
+      companyName: row.company_name, whatsapp: row.whatsapp, orderNumber: row.order_number,
+    })
+  } catch (err) {
+    console.error('order override failed:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Drop every correction and go back to exactly what the customer submitted.
+router.delete('/:rowSlug/override', async (req, res) => {
+  try {
+    await deleteOrderOverride(req.params.rowSlug)
+    logActivity({
+      ...actorFrom(req), action: 'order.details_reverted', targetType: 'order',
+      targetId: req.params.rowSlug, targetLabel: req.body?.companyName || null,
+    })
+    res.status(204).end()
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
 
 // ── Per-order history ─────────────────────────────────────────────────────────
 
@@ -282,7 +379,7 @@ router.patch('/:rowSlug/status', async (req, res) => {
   await setOrderStatus(req.params.rowSlug, status, note)
   // companyName/orderNumber come from the order card already in view — avoids
   // an extra Formaloo round-trip just to label the log entry.
-  const label = companyName ? `${companyName}${orderNumber ? ` (#${orderNumber})` : ''}` : req.params.rowSlug
+  const label = orderLabel(companyName, orderNumber) || req.params.rowSlug
   logActivity({
     ...actorFrom(req), action: 'order.status_changed', targetType: 'order', targetId: req.params.rowSlug, targetLabel: label,
     metadata: { from: previous?.status || 'pending', to: status, note: note || null },

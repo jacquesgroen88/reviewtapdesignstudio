@@ -5,6 +5,7 @@ import { nanoid } from 'nanoid'
 import { setLogoRequestToken, getManualOrder, getManualOrderByToken } from '../services/manualOrders.js'
 import { normalizePhone, ghlLogoConfigured, sendLogoRequestViaGhl } from '../services/ghl.js'
 import { logActivity } from '../services/activityLog.js'
+import { bareOrderNumber } from '../lib/orderNumber.js'
 
 const router = express.Router()
 
@@ -12,7 +13,7 @@ const PUBLIC_BASE = () => process.env.PUBLIC_URL || 'https://link.reviewtap.co.z
 
 function buildWaUrl({ whatsapp, companyName, orderNumber, url }) {
   const phone = normalizePhone(whatsapp)
-  const msg = `Hi ${companyName || 'there'}, thanks for your ReviewTap order${orderNumber ? ` (#${orderNumber})` : ''}! We just need your logo to get your design started — pop it in here: ${url}`
+  const msg = `Hi ${companyName || 'there'}, thanks for your ReviewTap order${bareOrderNumber(orderNumber) ? ` (#${bareOrderNumber(orderNumber)})` : ''}! We just need your logo to get your design started — pop it in here: ${url}`
   const base = phone ? `https://wa.me/${phone.replace('+', '')}` : 'https://wa.me/'
   return `${base}?text=${encodeURIComponent(msg)}`
 }

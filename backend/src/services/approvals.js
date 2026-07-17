@@ -71,25 +71,32 @@ export async function supersedeForDesigns(designIds, { exceptToken } = {}) {
   }
 }
 
-// design_id → latest approval summary, for order-card chips
+// design_id → latest approval summary, for order-card chips.
+//
+// Uses the approval_summary_by_design() RPC rather than selecting the rows here.
+// This used to `.select('... , items')`, and items carries every design's full
+// canvas snapshot (the version lock): 46 MB across 77 approvals, one row 5.4 MB,
+// dragged over the wire on EVERY Orders tab switch and search to build an ~8 KB
+// map, then discarded. Measured 12.9s — by far the biggest cost on the page.
+// The RPC does the same flattening inside Postgres: ~0.1s, ~85 small rows.
+//
+// If you ever need the snapshot, fetch the ONE approval you need by token
+// (getApproval). Never widen this projection — that's how the 46 MB happened.
 export async function approvalSummaryByDesign() {
-  const { data, error } = await getClient().from('approvals')
-    .select('token, sent_at, viewed_at, superseded_at, items')
-    .order('sent_at', { ascending: false })
+  const { data, error } = await getClient().rpc('approval_summary_by_design')
   if (error) throw error
   const map = {}
-  for (const a of data ?? []) {
-    for (const item of a.items || []) {
-      if (map[item.design_id]) continue   // newest first — keep the latest only
-      map[item.design_id] = {
-        token: a.token,
-        sent_at: a.sent_at,
-        viewed_at: a.viewed_at,
-        superseded: !!a.superseded_at,
-        response: item.response || null,
-        responded_at: item.responded_at || null,
-        comment: item.comment || null,
-      }
+  for (const r of data ?? []) {
+    // RPC returns sent_at DESC, so the first row per design is the latest.
+    if (!r.design_id || map[r.design_id]) continue
+    map[r.design_id] = {
+      token: r.token,
+      sent_at: r.sent_at,
+      viewed_at: r.viewed_at,
+      superseded: !!r.superseded,
+      response: r.response || null,
+      responded_at: r.responded_at || null,
+      comment: r.comment || null,
     }
   }
   return map
@@ -116,6 +123,7 @@ export async function markReminded(token) {
 // every design approved → pending_print; any changes requested → pending.
 import { setOrderStatus } from './database.js'
 import { logActivity } from './activityLog.js'
+import { orderLabel } from '../lib/orderNumber.js'
 
 export async function handleApprovalResponse(token, designId, response, comment) {
   if (!['approved', 'changes'].includes(response)) throw new Error('invalid response')
@@ -135,7 +143,7 @@ export async function handleApprovalResponse(token, designId, response, comment)
     actorType: 'client', actorLabel: approval.client_name || null,
     action: response === 'approved' ? 'approval.approved' : 'approval.changesRequested',
     targetType: 'order', targetId: approval.owner_slug || token,
-    targetLabel: approval.client_name ? `${approval.client_name}${approval.order_number ? ` (#${approval.order_number})` : ''}` : null,
+    targetLabel: orderLabel(approval.client_name, approval.order_number),
     metadata: { comment: comment || null, designId },
   })
 
