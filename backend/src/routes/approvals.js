@@ -123,7 +123,9 @@ router.post('/', async (req, res) => {
 
 // Auto-send via the Reviewtap System (GHL): writes the link to the contact's
 // rt_studio_link field and enrolls them in the approval workflow, which sends
-// the approved WhatsApp template. Manual wa.me/copy-link stay available always.
+// the approved WhatsApp template. This is the DEFAULT send path as of 2026-07-17
+// (comms belong on the GHL contact record, not a personal phone); wa.me/copy-link
+// remain as a demoted fallback and log *.shared when used.
 router.post('/:token/send-ghl', async (req, res) => {
   try {
     if (!ghlConfigured()) return res.status(503).json({ error: 'Reviewtap System sending not configured yet — use the WhatsApp button' })

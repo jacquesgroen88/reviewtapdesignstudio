@@ -50,8 +50,9 @@ router.post('/', async (req, res) => {
 
 // Auto-send via the Reviewtap System (GHL): writes the upload link to the
 // contact's rt_logo_upload field and enrolls them in the logo-request
-// workflow, which sends the logo_request WhatsApp template. The manual
-// wa.me/copy-link options stay available regardless.
+// workflow, which sends the logo_request WhatsApp template. This is the DEFAULT
+// send path as of 2026-07-17; wa.me/copy-link remain as a demoted fallback and
+// log *.shared when used.
 router.post('/:token/send-ghl', async (req, res) => {
   try {
     if (!ghlLogoConfigured()) return res.status(503).json({ error: 'Reviewtap System sending not configured yet — use the WhatsApp button' })
