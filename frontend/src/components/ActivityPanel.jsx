@@ -1,51 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { apiFetch } from '../lib/api.js'
-
-const STATUS_TEXT = {
-  pending: 'Pending', ready: 'Ready', pending_approval: 'Pending Approval',
-  pending_print: 'Approved', at_printer: 'Print Pending', done: 'Done', skipped: 'Skipped',
-}
-
-// action → sentence fragment (goes after the actor's name). Keep these terse —
-// the row already carries the target label and a timestamp.
-const SENTENCES = {
-  'design.created':            e => `created a design for ${e.target_label || 'an order'}`,
-  'design.updated':            e => `updated the design for ${e.target_label || 'an order'}`,
-  'design.deleted':            e => `deleted a design for ${e.target_label || 'an order'}`,
-  'design.duplicated':         e => `duplicated a design for ${e.target_label || 'an order'}`,
-  'order.status_changed':      e => `changed ${e.target_label || 'an order'} to ${STATUS_TEXT[e.metadata?.to] || e.metadata?.to || '—'}`,
-  'manualOrder.created':       e => `added a manual order for ${e.target_label || 'a client'}`,
-  'manualOrder.updated':       e => `updated the order for ${e.target_label || 'a client'}`,
-  'manualOrder.deleted':       e => `deleted the manual order for ${e.target_label || 'a client'}`,
-  'qr.created':                e => `created QR code "${e.target_label || e.target_id}"`,
-  'qr.updated':                e => `updated QR code "${e.target_label || e.target_id}"`,
-  'qr.archived':               e => `archived QR code "${e.target_label || e.target_id}"`,
-  'qr.deleted':                e => `permanently deleted QR code "${e.target_label || e.target_id}"`,
-  'approval.sent':             e => `sent an approval request to ${e.target_label || 'a client'}`,
-  'logoRequest.sent':          e => `requested a logo from ${e.target_label || 'a client'}`,
-  'team.invited':              e => `invited ${e.target_label} to the team${e.metadata?.role === 'admin' ? ' as admin' : ''}`,
-  'team.removed':              e => `removed ${e.target_label || 'a team member'} from the team`,
-  'approval.approved':         () => 'approved their design',
-  'approval.changesRequested': e => `requested changes${e.metadata?.comment ? `: "${e.metadata.comment}"` : ''}`,
-  'logo.uploaded':             () => 'uploaded their logo',
-}
-
-function sentenceFor(entry) {
-  const fn = SENTENCES[entry.action]
-  return fn ? fn(entry) : entry.action
-}
-
-function timeAgo(iso) {
-  const diff = Date.now() - new Date(iso).getTime()
-  const min = Math.floor(diff / 60000)
-  if (min < 1) return 'just now'
-  if (min < 60) return `${min}m ago`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}h ago`
-  const day = Math.floor(hr / 24)
-  if (day < 7) return `${day}d ago`
-  return new Date(iso).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
-}
+// The sentence map + timeAgo moved to lib/activitySentences.js so this feed and
+// the per-order timeline (OrderHistory) describe every event identically.
+import { sentenceFor, actorNameFor, timeAgo, fullTimestamp } from '../lib/activitySentences.js'
 
 export default function ActivityPanel() {
   const [entries, setEntries] = useState([])
@@ -122,11 +79,11 @@ export default function ActivityPanel() {
                 <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${entry.actor_type === 'client' ? 'bg-blue-400' : 'bg-brand-500'}`} />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm text-gray-700">
-                    <span className="font-semibold text-gray-900">{entry.actor_label || (entry.actor_type === 'client' ? 'A client' : 'Someone')}</span>
+                    <span className="font-semibold text-gray-900">{actorNameFor(entry)}</span>
                     {' '}{sentenceFor(entry)}
                   </p>
                 </div>
-                <span className="text-xs text-gray-400 shrink-0 whitespace-nowrap" title={new Date(entry.created_at).toLocaleString('en-ZA')}>
+                <span className="text-xs text-gray-400 shrink-0 whitespace-nowrap" title={fullTimestamp(entry.created_at)}>
                   {timeAgo(entry.created_at)}
                 </span>
               </div>

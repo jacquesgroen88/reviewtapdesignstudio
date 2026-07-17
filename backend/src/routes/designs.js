@@ -8,6 +8,15 @@ function actorFrom(req) {
   return { actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null }
 }
 
+// Design events target the DESIGN, but the order-history endpoint queries by
+// order. Stamp the owning order into metadata at write time so the link
+// survives the design being deleted later (target_id would no longer resolve).
+// Historic rows were backfilled from designs.owner_slug on 2026-07-17.
+// Deliberately NOT falling back to order_number: it is not a reliable key to an
+// order (see CLAUDE.md "order_number is not an order key").
+const ownerMeta = (ownerSlug, extra = null) =>
+  ownerSlug ? { ...(extra || {}), ownerSlug } : extra
+
 const router = express.Router()
 
 // Library list (metadata only). ?owner=<slug> to scope to one order/job.
@@ -51,7 +60,7 @@ router.post('/', async (req, res) => {
       orderNumber: (orderNumber || '').trim() || null,
       createdBy: req.user?.id,
     })
-    logActivity({ ...actorFrom(req), action: 'design.created', targetType: 'design', targetId: id, targetLabel: created.name })
+    logActivity({ ...actorFrom(req), action: 'design.created', targetType: 'design', targetId: id, targetLabel: created.name, metadata: ownerMeta(created.owner_slug) })
     res.status(201).json(created)
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
@@ -69,7 +78,7 @@ router.put('/:id', async (req, res) => {
       supersedeForDesigns([req.params.id]).catch(err => console.error('supersede failed:', err.message))
       if (d.owner_slug) setOrderStatus(d.owner_slug, 'pending_approval', 'Design updated — needs (re)approval').catch(() => {})
     }
-    logActivity({ ...actorFrom(req), action: 'design.updated', targetType: 'design', targetId: req.params.id, targetLabel: updated.name })
+    logActivity({ ...actorFrom(req), action: 'design.updated', targetType: 'design', targetId: req.params.id, targetLabel: updated.name, metadata: ownerMeta(updated.owner_slug ?? d.owner_slug) })
     res.json(updated)
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
@@ -78,7 +87,7 @@ router.delete('/:id', async (req, res) => {
   try {
     const d = await getDesign(req.params.id)
     await deleteDesign(req.params.id)
-    if (d) logActivity({ ...actorFrom(req), action: 'design.deleted', targetType: 'design', targetId: req.params.id, targetLabel: d.name })
+    if (d) logActivity({ ...actorFrom(req), action: 'design.deleted', targetType: 'design', targetId: req.params.id, targetLabel: d.name, metadata: ownerMeta(d.owner_slug) })
     res.status(204).end()
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
@@ -94,7 +103,7 @@ router.post('/:id/duplicate', async (req, res) => {
       id, name, ownerSlug: src.owner_slug, productId: src.product_id, variantId: src.variant_id, design: src.design,
       orderNumber: src.order_number, createdBy: req.user?.id,
     })
-    logActivity({ ...actorFrom(req), action: 'design.duplicated', targetType: 'design', targetId: id, targetLabel: created.name, metadata: { fromDesignId: src.id } })
+    logActivity({ ...actorFrom(req), action: 'design.duplicated', targetType: 'design', targetId: id, targetLabel: created.name, metadata: ownerMeta(created.owner_slug, { fromDesignId: src.id }) })
     res.status(201).json(created)
   } catch (err) { res.status(500).json({ error: err.message }) }
 })

@@ -43,3 +43,85 @@ export async function listActivity({ limit = 50, before = null } = {}) {
   if (error) throw error
   return data ?? []
 }
+
+// Contact events, newest first. These are the only actions that mean a client
+// was actually reached (or that we tried to reach them). `link_created` is
+// deliberately NOT here — minting a link contacts nobody, and treating it as
+// contact is exactly what caused duplicate follow-ups. See the 2026-07-17 spec.
+export const CONTACT_ACTIONS = [
+  'approval.sent', 'logoRequest.sent',        // real sends via GHL
+  'approval.shared', 'logoRequest.shared',    // shared outside the system (intent)
+  'order.follow_up_logged',                   // phoned/emailed, recorded by hand
+]
+
+// Everything that happened to ONE order, newest first.
+// Two sources, because design events target the DESIGN, not the order:
+//   1. target_type='order' AND target_id=<rowSlug>
+//   2. target_type='design' AND metadata->>'ownerSlug'=<rowSlug>
+// Both are covered by the (target_type, target_id) index / a metadata filter.
+// Design rows before 2026-07-17 were backfilled; designs never linked to an
+// order (owner_slug null) correctly never appear on any card.
+export async function listActivityForOrder(rowSlug, { limit = 100 } = {}) {
+  const client = getClient()
+  const [ownRes, designRes] = await Promise.all([
+    client.from('activity_log').select('*')
+      .eq('target_type', 'order').eq('target_id', rowSlug)
+      .order('created_at', { ascending: false }).limit(limit),
+    client.from('activity_log').select('*')
+      .eq('target_type', 'design').eq('metadata->>ownerSlug', rowSlug)
+      .order('created_at', { ascending: false }).limit(limit),
+  ])
+  if (ownRes.error) throw ownRes.error
+  if (designRes.error) throw designRes.error
+
+  return [...(ownRes.data ?? []), ...(designRes.data ?? [])]
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .slice(0, limit)
+}
+
+// Most recent contact event per order, for the "Last contacted" line and the
+// Awaiting-client sort. ONE grouped read for every order rather than N calls —
+// the Orders list already does a full in-memory scan for any non-'all' filter,
+// so this joins that pass instead of adding a request per card.
+// Is this row PROOF we tried to reach the client, or only that a link exists?
+//
+// Before 2026-07-17, `approval.sent` / `logoRequest.sent` were written when the
+// link was minted, so a pre-rename row proves nothing was sent. After the
+// rename those actions are only ever written by the send-ghl handlers, which
+// always stamp `via: 'ghl'` — so the presence of `via` cleanly separates the
+// two eras with no date arithmetic. Ambiguous rows still surface (they carry a
+// real timestamp worth seeing) but are flagged so the UI never claims contact
+// that may not have happened. Claiming contact falsely is the exact failure
+// this whole feature exists to kill.
+function isConfirmedContact(r) {
+  if (r.action === 'order.follow_up_logged') return true   // a human states it happened
+  if (r.action.endsWith('.shared')) return true            // intent: WhatsApp/copy actually opened
+  return !!r.metadata?.via                                 // a real GHL send
+}
+
+export async function getLastContactBySlug() {
+  const { data, error } = await getClient()
+    .from('activity_log')
+    .select('target_id, action, actor_label, created_at, metadata')
+    .eq('target_type', 'order')
+    .in('action', CONTACT_ACTIONS)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  const map = {}
+  // Rows arrive newest-first, so the first sighting of a slug is its latest.
+  for (const r of data ?? []) {
+    if (!map[r.target_id]) {
+      map[r.target_id] = {
+        at: r.created_at,
+        by: r.actor_label,
+        action: r.action,
+        channel: r.metadata?.channel || r.metadata?.via || null,
+        confirmed: isConfirmedContact(r),
+        // Did it go through GHL, or someone's personal phone? Drives the
+        // "outside the system" marker and the leak review (~mid-Aug 2026).
+        viaSystem: r.metadata?.via === 'ghl',
+      }
+    }
+  }
+  return map
+}

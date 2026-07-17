@@ -273,7 +273,30 @@ button becomes **Edit** and the order stays fully reusable.
     API, stale-Lambda-container theory, forcing a fresh deploy — checked out fine, since the
     deployed code genuinely WAS current; it just never had this route in the first place.
     **When adding any new `/api/*` router, update both files or grep for the router name in
-    both before considering the feature done.**
+    both before considering the feature done.** (Note: this applies to new ROUTERS only. New
+    sub-routes on an already-mounted router — e.g. `GET /api/orders/:slug/history` inside
+    `routes/orders.js` — are picked up by both apps automatically, because both import the
+    same router file. Check which case you're in before hunting.)
+
+15. **`order_number` is NOT a key to an order — never join on it.** `designs.order_number` is
+    a free-text attribution field, not a foreign key, and real data breaks every assumption:
+    order `1795` carries designs named for *Rustenburg Toyota*, *Slices* AND *Street Food Lane*;
+    order `1811` has both *Noble Village* (per `manual_orders`) and *Samancor Chrome* and
+    *Jomo Kwadi*. Formats are inconsistent too (`1812`, `#1812`) — the same leading-`#` trap
+    that caused the missing-logo false positives. **`owner_slug` is the only real order link.**
+    Backfilling design→order history via `order_number` would have attributed Street Food Lane's
+    design work to Rustenburg Toyota's card, which is worse than showing nothing (2026-07-17).
+    Corollary, worth fixing separately: designs with `owner_slug = null` but `order_number` set
+    (3 real client designs as of 17 Jul) are **invisible on every order card**, because
+    `listDesignsByOwner()` keys on `owner_slug` — they only show in the Design Studio library.
+
+16. **`status = 'pending_approval'` does NOT mean an approval was sent.** `designs.js` sets it
+    automatically whenever the ARTWORK changes ("Design updated — needs (re)approval"), i.e. on
+    work nobody has sent anywhere. It means "needs approval", not "awaiting the client". Keying
+    a chase list on it puts our own to-do list in front of the client's — caught against live
+    data while building the Awaiting Client tab (King Chicken sat in `pending_approval` having
+    never been contacted). The only honest "we actually asked" signal is an **approval record**
+    that is not superseded and has no response (`hasOpenApproval` in `routes/orders.js`).
 
 ---
 
@@ -333,6 +356,42 @@ same pattern as every other locked table; written only via the backend's service
 - Frontend: `components/ActivityPanel.jsx` (new `/activity` tab) — reverse-chronological feed,
   action→sentence templates, cursor-based "Load more". Verified the whole pipeline end-to-end
   with real writes/reads against Supabase before shipping (test rows cleaned up after).
+
+## Order history on the card (added 2026-07-17)
+Per-order timeline + a "Last contacted" line + an **Awaiting Client** tab, so nobody chases a
+client Giorgio already chased. Spec: `2026-07-17-order-history-spec.md`. Reads the existing
+`activity_log`; the work was mostly fixing what it recorded.
+- **`GET /api/orders/:rowSlug/history`** merges two sources: order-targeted rows
+  (`target_id = rowSlug`) and design-targeted rows (`metadata->>'ownerSlug' = rowSlug`, since
+  design events target the DESIGN). Historic design rows were backfilled from `designs.owner_slug`
+  on 17 Jul (56 rows; 9 with null `owner_slug` correctly stay off every card — see Gotcha #15).
+  New design events stamp `ownerSlug` at write time so the link survives the design being deleted.
+- **"Sent" now means SENT.** `approval.sent` / `logoRequest.sent` used to fire when the LINK WAS
+  MINTED, so the log claimed clients were contacted who never were — the exact cause of duplicate
+  follow-ups. Renamed to `*.link_created`; `*.sent` is now written ONLY by the `send-ghl` handlers.
+  The approval GHL send logged **nothing at all** before this (the logo one always did), so
+  actually messaging a client left no trace while opening a modal did.
+- **Old rows stay ambiguous, honestly.** 50 pre-17-Jul `approval.sent` rows can't be resolved
+  retroactively. `via` metadata separates the eras cleanly (only real GHL sends set it), so they
+  render as "created a link … (may not have been sent)" and the card says "Link created … (send
+  not confirmed)". **Never rewrite history rows to tidy this up.**
+- **GHL is the default send path** (Jacques, 17 Jul): comms belong on the GHL contact record, not
+  a personal phone. Both share modals now lead with `GhlSendConfirm primary`; wa.me is demoted to
+  a plain link reading "Send from my own WhatsApp instead / This won't appear in the Reviewtap
+  System". When `ghlAvailable` is false (no phone), wa.me returns to primary — blocking it would
+  push the work off-platform with no record at all.
+- **wa.me/copy clicks log `*.shared`** (`lib/shareLog.js`, fire-and-forget). This proves INTENT,
+  never delivery: the sender can still edit the message or close WhatsApp. Renders as "opened
+  WhatsApp to send", never "sent". Since GHL became default it doubles as a **leak detector** —
+  review the `*.shared` counts ~mid-Aug 2026; heavy use means a real gap in the GHL path (most
+  likely orders with no phone on file), not indiscipline.
+- **Awaiting Client tab** = `isAwaitingClient()`: ordered something, not done/skipped, AND
+  (an open unanswered approval OR a logo requested that never arrived, via `request_sent_at`
+  which predates the log). Sorted longest-since-contact first — that ordering IS the feature.
+  Verified live: 13 orders, no terminal statuses, no never-asked. See Gotchas #15 and #16 — both
+  were found by running this against real data, not by any test failing.
+- `lib/activitySentences.js` is the SHARED vocabulary for `/activity` and the card timeline, so
+  the two can't describe the same event differently. Add new actions there, not in a component.
 
 ## Environment variables (set in Netlify → Site settings → Env vars)
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY` (or `SUPABASE_SERVICE_KEY`)

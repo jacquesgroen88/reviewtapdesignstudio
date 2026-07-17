@@ -89,9 +89,12 @@ router.post('/', async (req, res) => {
     // Sending an approval means the order is now awaiting the client
     if (ownerSlug) setOrderStatus(ownerSlug, 'pending_approval', 'Approval link sent').catch(() => {})
 
+    // NOT 'approval.sent' — this handler only MINTS the link and opens the share
+    // modal. The client has not been contacted yet and may never be. A real send
+    // is logged by /:token/send-ghl or /:token/shared. See the 2026-07-17 spec §G2.
     logActivity({
       actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null,
-      action: 'approval.sent', targetType: 'order', targetId: ownerSlug || token,
+      action: 'approval.link_created', targetType: 'order', targetId: ownerSlug || token,
       targetLabel: clientName ? `${clientName}${orderNumber ? ` (#${orderNumber})` : ''}` : null,
       metadata: { designCount: storedItems.length },
     })
@@ -120,10 +123,39 @@ router.post('/:token/send-ghl', async (req, res) => {
     if (!approval.whatsapp) return res.status(400).json({ error: 'No WhatsApp number on this approval' })
     const url = `${PUBLIC_BASE()}/approve/${approval.token}`
     const contact = await sendApprovalViaGhl({ clientName: approval.client_name, phone: approval.whatsapp, url, orderNumber: approval.order_number })
+    // This is a REAL send (the logo-request equivalent has always logged one;
+    // this side was missing it entirely, so actually messaging a client left no
+    // trace while merely opening the modal did. See the 2026-07-17 spec §G3).
+    // 'via: ghl' means GHL accepted the workflow enrolment, NOT that WhatsApp
+    // delivered it — the UI must not claim delivery (board ab092).
+    logActivity({
+      actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null,
+      action: 'approval.sent', targetType: 'order', targetId: approval.owner_slug || approval.token,
+      targetLabel: approval.client_name, metadata: { via: 'ghl' },
+    })
     res.json({ ok: true, contactId: contact.id })
   } catch (err) {
     console.error('GHL send failed:', err.response?.data || err.message)
     res.status(502).json({ error: `Reviewtap System send failed: ${err.response?.data?.message || err.message}` })
+  }
+})
+
+// Shared outside the Reviewtap System (copy-link or personal WhatsApp).
+// Intent, not delivery — see the matching note in logoRequests.js.
+router.post('/:token/shared', async (req, res) => {
+  try {
+    const channel = req.body?.channel === 'whatsapp' ? 'whatsapp' : 'copy'
+    const approval = await getApproval(req.params.token)
+    if (!approval) return res.status(404).json({ error: 'Not found' })
+    logActivity({
+      actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null,
+      action: 'approval.shared', targetType: 'order', targetId: approval.owner_slug || approval.token,
+      targetLabel: approval.client_name, metadata: { channel },
+    })
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('approval share log failed:', err.message)
+    res.status(500).json({ error: err.message })
   }
 })
 

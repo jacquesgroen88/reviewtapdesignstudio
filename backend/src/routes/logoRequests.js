@@ -29,9 +29,11 @@ router.post('/', async (req, res) => {
     const updated = order.request_token ? order : await setLogoRequestToken(rowSlug, token)
 
     const url = `${PUBLIC_BASE()}/logo-request/${token}`
+    // NOT 'logoRequest.sent' — this only mints the link and opens the share
+    // modal; nothing has reached the customer yet. See the 2026-07-17 spec §G2.
     logActivity({
       actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null,
-      action: 'logoRequest.sent', targetType: 'order', targetId: rowSlug, targetLabel: updated.company_name,
+      action: 'logoRequest.link_created', targetType: 'order', targetId: rowSlug, targetLabel: updated.company_name,
     })
     res.status(201).json({
       token,
@@ -66,6 +68,30 @@ router.post('/:token/send-ghl', async (req, res) => {
   } catch (err) {
     console.error('GHL logo-request send failed:', err.response?.data || err.message)
     res.status(502).json({ error: `Reviewtap System send failed: ${err.response?.data?.message || err.message}` })
+  }
+})
+
+// The team clicked "copy link" or the wa.me button — i.e. shared this OUTSIDE
+// the Reviewtap System, from a personal WhatsApp. Records that a share was
+// ATTEMPTED: a wa.me click opens WhatsApp with a prefilled message and proves
+// intent, never delivery (the sender can still close it or edit the text), so
+// the UI must never render this as "delivered". Since GHL became the default
+// send path (2026-07-17), this doubles as a leak signal — it tells us how often
+// comms still bypass GHL, and on which orders. Review the counts ~mid-Aug 2026.
+router.post('/:token/shared', async (req, res) => {
+  try {
+    const channel = req.body?.channel === 'whatsapp' ? 'whatsapp' : 'copy'
+    const order = await getManualOrderByToken(req.params.token)
+    if (!order) return res.status(404).json({ error: 'Not found' })
+    logActivity({
+      actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null,
+      action: 'logoRequest.shared', targetType: 'order', targetId: order.row_slug, targetLabel: order.company_name,
+      metadata: { channel },
+    })
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('logo-request share log failed:', err.message)
+    res.status(500).json({ error: err.message })
   }
 })
 

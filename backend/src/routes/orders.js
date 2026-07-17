@@ -7,7 +7,7 @@ import {
   listManualOrders, getManualOrder, createManualOrder, updateManualOrder, deleteManualOrder, uploadLogo,
 } from '../services/manualOrders.js'
 import { fetchOpenShopifyOrders } from '../services/shopify.js'
-import { logActivity } from '../services/activityLog.js'
+import { logActivity, listActivityForOrder, getLastContactBySlug } from '../services/activityLog.js'
 
 const router = express.Router()
 
@@ -22,7 +22,7 @@ const VALID_STATUSES = ['pending', 'ready', 'pending_approval', 'pending_print',
 
 // Shared enrichment for BOTH Formaloo and manually-entered orders — one place
 // joins status/designs/approvals so the two sources behave identically.
-function enrichOrder(order, { statusMap, designsMap, names, approvalMap, shopifyMap = {} }) {
+function enrichOrder(order, { statusMap, designsMap, names, approvalMap, shopifyMap = {}, contactMap = {} }) {
   return {
     ...order,
     status: statusMap[order.rowSlug]?.status ?? (order.orderedStand || order.orderedCard ? 'pending' : 'not_needed'),
@@ -34,6 +34,10 @@ function enrichOrder(order, { statusMap, designsMap, names, approvalMap, shopify
     })),
     hasDesign: !!designsMap[order.rowSlug]?.length,
     shopify: shopifyMap[String(order.orderNumber || '').replace(/^#/, '')] || null,
+    // null = nobody has contacted this client through the studio. NOT the same
+    // as "nobody has contacted them" for orders worked before 2026-07-10, when
+    // the log did not exist — the UI distinguishes the two.
+    lastContact: contactMap[order.rowSlug] || null,
   }
 }
 
@@ -44,6 +48,10 @@ function toOrderShape(m) {
     cardEmail: m.email, cardPhone: m.phone, cardAddress: m.address,
     orderedStand: m.ordered_stand, orderedCard: m.ordered_card,
     submittedAt: m.created_at, source: 'manual',
+    // Authoritative "we asked them for a logo" record. Predates activity_log
+    // (which only starts 2026-07-10), so the Awaiting-client filter anchors on
+    // this column rather than on log entries and stays correct for old orders.
+    logoRequestSentAt: m.request_sent_at || null,
   }
 }
 
@@ -61,15 +69,56 @@ const STATUS_FILTER_MAP = {
   done: 'done',
 }
 
+const orderedSomething = o => o.orderedStand || o.orderedCard
+
+// Finished or abandoned — never chase these, whatever else is outstanding.
+const TERMINAL_STATUSES = ['done', 'skipped']
+
+// An approval link is out and the client has not answered it.
+//
+// NOT the same as status === 'pending_approval', which is a trap: that status
+// is also set automatically whenever a DESIGN IS UPDATED ("needs (re)approval",
+// designs.js) — i.e. on work we have not sent to anyone yet. Keying the chase
+// list on it put our own to-do list in front of the client's (verified against
+// live data: King Chicken sat in pending_approval having never been contacted).
+// The approval record itself is the only honest signal that we actually asked.
+const hasOpenApproval = o => (o.designs || []).some(
+  d => d.approval && !d.approval.superseded && !d.approval.response
+)
+
+// We asked for a logo and it never arrived. request_sent_at is authoritative
+// and predates activity_log, so this stays correct for pre-10-Jul orders.
+const hasOpenLogoRequest = o => !o.logoUrl && !!o.logoRequestSentAt
+
+function isAwaitingClient(order) {
+  if (!orderedSomething(order)) return false
+  if (TERMINAL_STATUSES.includes(order.status)) return false
+  return hasOpenApproval(order) || hasOpenLogoRequest(order)
+}
+
 function matchesFilter(order, filter) {
   if (!filter || filter === 'all') return true
   // Must ALSO have ordered a stand/card — plenty of Formaloo submissions never
   // ordered anything (orderedStand/orderedCard both false) and legitimately
   // have no logo; without this check they flooded the tab (found while
   // testing search: 132 "awaiting logo" results instead of the real ~30).
-  if (filter === 'awaiting_logo') return !order.logoUrl && (order.orderedStand || order.orderedCard)
+  if (filter === 'awaiting_logo') return !order.logoUrl && orderedSomething(order)
+  // The ball is in the CLIENT's court: we asked for something and are waiting.
+  // Deliberately excludes work we simply have not done or sent yet — that is
+  // our own to-do (Awaiting Logo / Ready), not a chase.
+  if (filter === 'awaiting_client') return isAwaitingClient(order)
   const target = STATUS_FILTER_MAP[filter]
   return target ? order.status === target : true
+}
+
+// Longest-since-contact first: the top row is the one most overdue a nudge.
+// This ordering IS the feature — it is what answers "who do I chase" without
+// opening every card. Never-contacted sorts first (nothing is more overdue
+// than a client we have no record of ever reaching).
+function byStalestContact(a, b) {
+  const at = a.lastContact?.at ? new Date(a.lastContact.at).getTime() : -Infinity
+  const bt = b.lastContact?.at ? new Date(b.lastContact.at).getTime() : -Infinity
+  return at - bt
 }
 
 function matchesSearch(order, search) {
@@ -95,14 +144,18 @@ router.get('/', async (req, res) => {
     const fetchPageSize = needsFullScan ? 500 : pageSize
     const { orders, count } = await fetchOrders({ page: fetchPage, pageSize: fetchPageSize, onlyDesignNeeded })
 
-    const [statuses, designsMap, names, approvalMap, manualRaw, shopifyMap] = await Promise.all([
+    const [statuses, designsMap, names, approvalMap, manualRaw, shopifyMap, contactMap] = await Promise.all([
       getAllOrderStatuses(), listDesignsByOwner(), getProfileNames(),
       approvalSummaryByDesign().catch(() => ({})),
       listManualOrders().catch(() => []),
       fetchOpenShopifyOrders().catch(err => { console.error('Shopify sync error:', err.message); return {} }),
+      // One grouped read for every order, not one per card. Same
+      // fail-soft posture as the other joins: a history hiccup must never take
+      // the Orders tab down, it just costs the "Last contacted" line.
+      getLastContactBySlug().catch(err => { console.error('last-contact fetch error:', err.message); return {} }),
     ])
     const statusMap = Object.fromEntries(statuses.map(s => [s.row_slug, s]))
-    const ctx = { statusMap, designsMap, names, approvalMap, shopifyMap }
+    const ctx = { statusMap, designsMap, names, approvalMap, shopifyMap, contactMap }
 
     const enriched = orders.map(order => enrichOrder(order, ctx))
       .filter(o => matchesFilter(o, filter)).filter(o => matchesSearch(o, search))
@@ -117,6 +170,9 @@ router.get('/', async (req, res) => {
     let result, total
     if (needsFullScan) {
       result = [...manualResult, ...enriched]
+      // Awaiting-client is a worklist, not a browse: order it by who is most
+      // overdue a nudge rather than by submission date.
+      if (filter === 'awaiting_client') result.sort(byStalestContact)
       total = result.length
     } else {
       result = fetchPage === 1 ? [...manualResult, ...enriched] : enriched
@@ -179,6 +235,45 @@ router.get('/:rowSlug', async (req, res) => {
 })
 
 // (Design read/write moved to /api/designs — designs are first-class now.)
+
+// ── Per-order history ─────────────────────────────────────────────────────────
+
+// Everything that happened to one order, newest first. Visible to every
+// authed team member by design (decision 4, 2026-07-17): Giorgio is the person
+// most likely to duplicate a follow-up, so hiding this from designers would
+// defeat the point. No history exists before 2026-07-10 (the log did not exist);
+// the UI says so explicitly rather than implying nothing happened.
+router.get('/:rowSlug/history', async (req, res) => {
+  try {
+    const entries = await listActivityForOrder(req.params.rowSlug)
+    res.json(entries.map(e => ({
+      id: e.id, at: e.created_at, actorType: e.actor_type, actorLabel: e.actor_label,
+      action: e.action, targetLabel: e.target_label, metadata: e.metadata,
+    })))
+  } catch (err) {
+    console.error('order history failed:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// "I chased them myself" — for a phone call or an email, i.e. contact that
+// happens off-platform and no click can capture. A fallback, not the main path:
+// since GHL became the default send method, real sends log themselves.
+router.post('/:rowSlug/note', async (req, res) => {
+  try {
+    const text = (req.body?.text || '').trim()
+    if (!text) return res.status(400).json({ error: 'text required' })
+    if (text.length > 500) return res.status(400).json({ error: 'text too long (max 500 chars)' })
+    logActivity({
+      ...actorFrom(req), action: 'order.follow_up_logged', targetType: 'order',
+      targetId: req.params.rowSlug, targetLabel: req.body?.companyName || null,
+      metadata: { text },
+    })
+    res.status(201).json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
 
 router.patch('/:rowSlug/status', async (req, res) => {
   const { status, note, companyName, orderNumber } = req.body

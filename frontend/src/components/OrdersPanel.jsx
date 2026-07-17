@@ -6,6 +6,8 @@ import { createLogoRequest } from '../lib/logoRequest.js'
 import ApprovalShareModal from './ApprovalShareModal.jsx'
 import LogoRequestShareModal from './LogoRequestShareModal.jsx'
 import ManualOrderModal from './ManualOrderModal.jsx'
+import OrderHistory, { LastContactLine } from './OrderHistory.jsx'
+import { logShare } from '../lib/shareLog.js'
 
 const STATUS_LABELS = {
   pending:          { label: 'Pending',          color: 'bg-amber-100 text-amber-700' },
@@ -33,6 +35,9 @@ const STATUS_OPTIONS = [
 const FILTER_TABS = [
   { id: 'all',              label: 'All orders' },
   { id: 'awaiting_logo',    label: 'Awaiting Logo' },
+  // The chase list: the ball is in the client's court. Sorted server-side by
+  // longest-since-contact, so the top row is the one most overdue a nudge.
+  { id: 'awaiting_client',  label: 'Awaiting Client' },
   { id: 'ready',            label: 'Ready' },
   { id: 'pending_approval', label: 'Pending Approval' },
   { id: 'approved',         label: 'Approved' },
@@ -114,10 +119,32 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
     try {
       const result = await createLogoRequest(order.rowSlug)
       window.open(result.waUrl, '_blank', 'noopener')
+      // This path bypasses GHL entirely — straight to a personal WhatsApp. Log
+      // it so the card shows it happened and the leak stays measurable.
+      logShare({ kind: 'logo', token: result.token, channel: 'whatsapp' })
       refreshMissingLogo()
     } catch (err) {
       setError(`Logo request failed: ${err.message || 'network error'}`)
     } finally { setRequestingLogo(null) }
+  }
+
+  // Off-platform contact (a phone call, an email) that no click can capture.
+  // The fallback, not the main path: real sends now go through GHL and log
+  // themselves.
+  async function logFollowUp(order) {
+    const text = window.prompt(`Log a follow-up for ${order.companyName || 'this order'}\n\nWhat did you do? (e.g. "Phoned, will send logo Monday")`)
+    if (!text?.trim()) return
+    try {
+      const res = await apiFetch(`/api/orders/${encodeURIComponent(order.rowSlug)}/note`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text.trim(), companyName: order.companyName }),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      load()   // refresh so the "Last contacted" line reflects it immediately
+    } catch (err) {
+      setError(`Could not log follow-up: ${err.message || 'network error'}`)
+    }
   }
 
   const load = useCallback(async () => {
@@ -360,6 +387,7 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
                 onDeleteManual={() => deleteManualOrder(order)}
                 onRequestLogo={() => requestLogoForOrder(order)}
                 onRequestLogoWhatsapp={() => requestLogoViaWhatsapp(order)}
+                onLogFollowUp={() => logFollowUp(order)}
                 isRequestingLogo={requestingLogo === order.rowSlug}
               />
             ))}
@@ -401,7 +429,7 @@ function ApprovalChip({ approval }) {
   return <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full shrink-0 ${cls}`} title={title}>{text}</span>
 }
 
-function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdating, onSendApproval, isSendingApproval, onEditManual, onDeleteManual, onRequestLogo, onRequestLogoWhatsapp, isRequestingLogo }) {
+function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdating, onSendApproval, isSendingApproval, onEditManual, onDeleteManual, onRequestLogo, onRequestLogoWhatsapp, isRequestingLogo, onLogFollowUp }) {
   const [expanded, setExpanded] = useState(false)
   const status = STATUS_LABELS[order.status] ?? STATUS_LABELS.pending
   const canDesign = order.orderedStand || order.orderedCard
@@ -513,9 +541,27 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
         )}
       </div>
 
+      {/* Who last spoke to this client, and when. Deliberately always visible
+          rather than hidden behind the History toggle: if you have to open
+          something to learn the client was already contacted, you won't, and
+          you'll send the duplicate. This one line is the anti-duplicate-work
+          feature; the timeline below is the detail behind it. */}
+      {canDesign && (
+        <div className="flex items-center justify-between gap-2">
+          <LastContactLine lastContact={order.lastContact} submittedAt={order.submittedAt} />
+          <button onClick={onLogFollowUp}
+            title="Record a call or email you made outside the system"
+            className="text-xs text-gray-400 hover:text-gray-600 shrink-0 transition-colors">
+            + Log follow-up
+          </button>
+        </div>
+      )}
+
       <button onClick={() => setExpanded(e => !e)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">
         {expanded ? '▲ Hide details' : '▼ Logo, review link & contact'}
       </button>
+
+      <OrderHistory rowSlug={order.rowSlug} submittedAt={order.submittedAt} />
 
       {/* Expanded reference details */}
       {expanded && (
