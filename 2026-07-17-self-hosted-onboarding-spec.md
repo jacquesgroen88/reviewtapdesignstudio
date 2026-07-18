@@ -1,7 +1,7 @@
 # Self-Hosted Onboarding (Formaloo Replacement) — Spec
 
 **Date**: 2026-07-17
-**Status**: APPROVED v2, 2026-07-17. All decisions closed (§7). Ready to build (§8).
+**Status**: BUILT 2026-07-17 (steps 1–6 of §8 live; step 7 = Jacques flips the Shopify email template; step 8 stays a later phase — Formaloo NOT retired). See CLAUDE.md "Destinations + /setup".
 **Goal**: the customer buys, and within ~30 seconds of the order confirmation we have a verified logo and a verified Google review link for **every business the order is actually for**, without anyone chasing them.
 
 > **v2 changes** (Jacques's answers reshaped two things):

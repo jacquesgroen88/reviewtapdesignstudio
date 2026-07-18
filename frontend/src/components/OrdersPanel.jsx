@@ -397,6 +397,12 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
                 key={order.rowSlug}
                 order={order}
                 onNewDesign={() => onNewDesign(order)}
+                onNewDesignFor={dest => onNewDesign({
+                  ...order,
+                  companyName: dest.businessName || order.companyName,
+                  logoUrl: dest.logoUrl || order.logoUrl,
+                  googleReviewUrl: dest.googleReviewUrl || order.googleReviewUrl,
+                })}
                 onOpenDesign={onOpenDesign}
                 onStatusChange={s => updateStatus(order, s)}
                 isUpdating={updating === order.rowSlug}
@@ -449,7 +455,7 @@ function ApprovalChip({ approval }) {
   return <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full shrink-0 ${cls}`} title={title}>{text}</span>
 }
 
-function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdating, onSendApproval, isSendingApproval, onEditManual, onEditDetails, onDeleteManual, onRequestLogo, onRequestLogoWhatsapp, isRequestingLogo, onLogFollowUp }) {
+function OrderCard({ order, onNewDesign, onNewDesignFor, onOpenDesign, onStatusChange, isUpdating, onSendApproval, isSendingApproval, onEditManual, onEditDetails, onDeleteManual, onRequestLogo, onRequestLogoWhatsapp, isRequestingLogo, onLogFollowUp }) {
   const [expanded, setExpanded] = useState(false)
   const status = STATUS_LABELS[order.status] ?? STATUS_LABELS.pending
   const canDesign = order.orderedStand || order.orderedCard
@@ -505,6 +511,49 @@ function OrderCard({ order, onNewDesign, onOpenDesign, onStatusChange, isUpdatin
           <StatusDropdown current={order.status} onChange={onStatusChange} loading={isUpdating} />
         </div>
       </div>
+
+      {/* Destinations — the businesses this order is actually FOR (spec
+          2026-07-17). Only rendered when there is more than one: a single
+          destination is identical to the card header and would just repeat it.
+          Each row gets its own Design button prefilled with THAT business's
+          logo + review link — the 1795/1811/1820 case, first-class instead of
+          improvised. */}
+      {order.destinations?.length > 1 && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-gray-400">
+            This order is for {order.destinations.length} businesses
+            {order.shopify && (() => {
+              const alloc = order.destinations.reduce((s, d) => s + (d.qtyStand || 0) + (d.qtyReviewCard || 0) + (d.qtySmartCard || 0), 0)
+              return alloc !== order.shopify.quantity
+                ? <span className="text-orange-500 font-semibold"> · {alloc} of {order.shopify.quantity} items allocated</span>
+                : null
+            })()}
+          </p>
+          {order.destinations.map((d, i) => {
+            const hasLogo = d.logoUrl || (i === 0 && order.logoUrl)
+            const qty = [
+              d.qtyStand ? `${d.qtyStand}× stand` : null,
+              d.qtyReviewCard ? `${d.qtyReviewCard}× card` : null,
+              d.qtySmartCard ? `${d.qtySmartCard}× smart` : null,
+            ].filter(Boolean).join(' · ')
+            return (
+              <div key={d.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-orange-50/60 border border-orange-100">
+                {hasLogo
+                  ? <img src={d.logoUrl || order.logoUrl} alt="" onError={e => { e.target.style.display = 'none' }}
+                      className="w-6 h-6 object-contain rounded border border-gray-100 bg-white shrink-0" />
+                  : <span className="shrink-0 text-xs font-medium px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-600">needs logo</span>}
+                <span className="flex-1 min-w-0 text-xs font-medium text-gray-700 truncate">{d.businessName || '(unnamed)'}</span>
+                {qty && <span className="text-xs text-gray-400 shrink-0">{qty}</span>}
+                {d.googleReviewUrl && (
+                  <span className="shrink-0 text-xs text-green-600" title="Review link confirmed from a picked Google listing">✓ link</span>
+                )}
+                <button onClick={() => onNewDesignFor(d)}
+                  className="shrink-0 text-xs font-medium text-brand-600 hover:text-brand-700">Design</button>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* Designs for this order — the actionable focus */}
       {order.designs?.length > 0 && (

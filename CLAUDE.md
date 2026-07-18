@@ -515,6 +515,47 @@ server-rendered-public-page pattern as the approval flow (Feature F), reusing
 
 ---
 
+## Destinations + /setup — self-hosted onboarding (added 2026-07-17)
+Spec: `2026-07-17-self-hosted-onboarding-spec.md` (v2, all decisions closed). The customer
+intake front door is now OURS: the Shopify order confirmation links `/setup/<orderNumber>`
+(tokenless — §4.0 of the spec explains why a token is impossible: at order time neither our
+Shopify app nor GHL is permitted to know the customer, so the receipt Liquid is the only
+channel and it can only render the order number). Formaloo stays reachable-but-unlinked as
+rollback; do NOT retire it yet (that's a later phase together with board ab096).
+
+- **`order_destinations`** (RLS deny-all): one row per business/branch an order is FOR —
+  `row_slug` (the ONLY order key, Gotcha #15), position, business_name, google_place_id,
+  google_review_url, logo_url, qty_stand/qty_review_card/qty_smart_card. Backfilled 2026-07-17:
+  every manual order = its own position-0 destination; order 1820 (Formaloo) got its two real
+  destinations (Witsieshoek pos0 + Thaba Adventures pos1) — the model proof, verified through
+  a real authed /api/orders request.
+- **Logo storage is PER DESTINATION**: `${rowSlug}/${destId}.${ext}`
+  (`services/destinations.js`). The old `${rowSlug}/logo.ext` path (manualOrders.uploadLogo)
+  would silently overwrite across destinations — never reuse it for multi-destination writes.
+- **enrichOrder**: `order.destinations[]` joined fail-soft; destination 0 FILLS GAPS in the
+  singular fields (`||` fallback), never clobbers them — Formaloo/manual/override all outrank
+  it. `missingLogo()` = any destination without a logo (dest-0 may inherit the order-level
+  logo, later destinations may not — 1820's Thaba gap is real work). Awaiting Logo +
+  hasOpenLogoRequest both read it.
+- **/setup page**: standalone `netlify/functions/setup.js` (prod) + `routes/setupPublic.js`
+  (local dev) — TWINS, keep in step. Renders via `services/setupPage.js`; logic in
+  `services/setup.js`. Anchor resolution: manual row by number → Formaloo row by number
+  (attaches to the FORMALOO slug, no duplicate card) → creates a manual row on first submit.
+  Submit is TWO-PHASE (metadata first, then one logo per POST) so no request approaches the
+  6 MB function body limit. Re-openable by design: every submit is a full-set upsert, never a
+  one-shot. WhatsApp capture → manual row, or order_overrides for Formaloo anchors → GHL
+  contact upsert (contact ONLY, no workflow enrolment — never message someone seconds after
+  they helped us). Smart-card orders end with a cards.reviewtap.co.za/new handoff.
+  The Places picker in setupPage.js is the DELIBERATE TWIN of logoRequestPage.js's.
+- **Product split** (`services/shopify.js`): `requiresSmartCard` / `requiresReviewCard` +
+  per-type quantities; `requiresCard` keeps its old both-products meaning for existing callers.
+- **Chase links** (`routes/logoRequests.js` chaseUrl): orders WITH a number → `/setup/<bare>`;
+  walk-ins without one → the token page. The token is still minted either way (request_sent_at
+  anchors the Awaiting Client tab).
+- **Order card**: destinations block renders only when >1 (a single destination would just
+  repeat the header); per-destination Design button prefills THAT business; allocation
+  mismatch vs Shopify shows amber (soft flag, D2 — never a gate, on the page or the card).
+
 ## Orders filter tabs (reworked 2026-07-09, Print Pending added 2026-07-11)
 Replaced the old 3-tab set (`needs_design`/`all`/`done`) with 7: **All orders, Awaiting Logo,
 Ready, Pending Approval, Approved, Print Pending, Done**. `Approved` reads the `pending_print`

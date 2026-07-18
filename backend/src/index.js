@@ -12,6 +12,7 @@ import approvalsRouter from './routes/approvals.js'
 import approvePublicRouter from './routes/approvePublic.js'
 import logoRequestsRouter from './routes/logoRequests.js'
 import logoRequestPublicRouter from './routes/logoRequestPublic.js'
+import setupPublicRouter from './routes/setupPublic.js'
 import activityRouter from './routes/activity.js'
 import proxyImageRouter from './routes/proxyImage.js'
 import { requireAuth } from './middleware/auth.js'
@@ -28,6 +29,7 @@ app.get('/api/health', (_, res) => res.json({ ok: true }))
 app.use('/r',               redirectRouter)   // dynamic QR redirect: /r/:code
 app.use('/approve',         approvePublicRouter)   // client approval page (no login)
 app.use('/logo-request',    logoRequestPublicRouter)   // client logo-upload page (no login)
+app.use('/setup',           setupPublicRouter)   // customer onboarding page (no login, tokenless)
 app.use('/api/proxy-image', proxyImageRouter)
 
 // Everything else requires a signed-in team member

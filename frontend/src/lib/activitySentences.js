@@ -49,6 +49,7 @@ export const SENTENCES = {
   'approval.approved':         () => 'approved their design',
   'approval.changesRequested': e => `requested changes${e.metadata?.comment ? `: "${e.metadata.comment}"` : ''}`,
   'logo.uploaded':             () => 'uploaded their logo',
+  'setup.submitted':           e => `completed order setup${e.metadata?.destinations > 1 ? ` for ${e.metadata.destinations} businesses` : ''}${e.metadata?.mismatch ? ' (allocation doesn\'t match the order — check quantities)' : ''}`,
 
   // Link minted, nobody contacted yet.
   'approval.link_created':     e => `created an approval link for ${e.targetLabel || 'a client'}`,

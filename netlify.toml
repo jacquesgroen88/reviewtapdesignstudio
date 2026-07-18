@@ -48,6 +48,13 @@
   status = 200
   force  = true
 
+# Customer onboarding page → dedicated function (public, server-rendered, tokenless)
+[[redirects]]
+  from   = "/setup/*"
+  to     = "/.netlify/functions/setup"
+  status = 200
+  force  = true
+
 # SPA fallback
 [[redirects]]
   from   = "/*"

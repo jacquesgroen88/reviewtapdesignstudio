@@ -18,6 +18,15 @@ function buildWaUrl({ whatsapp, companyName, orderNumber, url }) {
   return `${base}?text=${encodeURIComponent(msg)}`
 }
 
+// Which page a chase link points at (spec 2026-07-17 step 6): orders with an
+// order number get the tokenless /setup page — the same front door the Shopify
+// receipt now carries, which also handles multi-location orders. Walk-ins with
+// no order number keep the token page: /setup has nothing to resolve them by.
+function chaseUrl(order, token) {
+  const bare = bareOrderNumber(order.order_number)
+  return bare ? `${PUBLIC_BASE()}/setup/${bare}` : `${PUBLIC_BASE()}/logo-request/${token}`
+}
+
 // body: { rowSlug }
 router.post('/', async (req, res) => {
   try {
@@ -26,10 +35,13 @@ router.post('/', async (req, res) => {
     const order = await getManualOrder(rowSlug)
     if (!order) return res.status(404).json({ error: 'Order not found' })
 
+    // The token is still minted even when /setup is the link — it keeps the
+    // request_sent_at trail (which the Awaiting Client tab anchors on) and the
+    // token page working as a fallback.
     const token = order.request_token || nanoid(21)
     const updated = order.request_token ? order : await setLogoRequestToken(rowSlug, token)
 
-    const url = `${PUBLIC_BASE()}/logo-request/${token}`
+    const url = chaseUrl(updated, token)
     // NOT 'logoRequest.sent' — this only mints the link and opens the share
     // modal; nothing has reached the customer yet. See the 2026-07-17 spec §G2.
     logActivity({
@@ -59,7 +71,7 @@ router.post('/:token/send-ghl', async (req, res) => {
     const order = await getManualOrderByToken(req.params.token)
     if (!order) return res.status(404).json({ error: 'Not found' })
     if (!order.whatsapp) return res.status(400).json({ error: 'No WhatsApp number on this order' })
-    const url = `${PUBLIC_BASE()}/logo-request/${order.request_token}`
+    const url = chaseUrl(order, order.request_token)
     const contact = await sendLogoRequestViaGhl({ clientName: order.company_name, phone: order.whatsapp, url, orderNumber: order.order_number })
     logActivity({
       actorType: 'team', actorId: req.user?.id || null, actorLabel: req.profile?.display_name || req.user?.email || null,

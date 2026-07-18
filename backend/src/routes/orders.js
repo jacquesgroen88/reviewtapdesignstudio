@@ -10,6 +10,7 @@ import {
   listManualOrders, getManualOrder, createManualOrder, updateManualOrder, deleteManualOrder, uploadLogo,
 } from '../services/manualOrders.js'
 import { fetchOpenShopifyOrders } from '../services/shopify.js'
+import { listDestinationsBySlug, listDestinations } from '../services/destinations.js'
 import { logActivity, listActivityForOrder, getLastContactBySlug } from '../services/activityLog.js'
 import { orderLabel, bareOrderNumber } from '../lib/orderNumber.js'
 
@@ -55,10 +56,24 @@ function applyOverride(order, override) {
   }
 }
 
-function enrichOrder(rawOrder, { statusMap, designsMap, names, approvalMap, shopifyMap = {}, contactMap = {}, overrideMap = {} }) {
+function enrichOrder(rawOrder, { statusMap, designsMap, names, approvalMap, shopifyMap = {}, contactMap = {}, overrideMap = {}, destinationsMap = {} }) {
   const order = applyOverride(rawOrder, overrideMap[rawOrder.rowSlug])
+  // Destinations (spec 2026-07-17 §4.4): the businesses this order is FOR.
+  // Destination 0 FILLS GAPS in the singular fields (`??`), it never clobbers
+  // them — Formaloo's submission, manual edits and staff overrides all outrank
+  // it. The write path keeps manual_orders' singulars mirrored to destination 0
+  // anyway, so for /setup-created orders the two never disagree; this fallback
+  // exists for orders whose only data arrived per-destination. Everything
+  // downstream (WhatsApp greeting, GHL contact, design names, log labels)
+  // reads the enriched order, so this one spot covers all of them.
+  const destinations = destinationsMap[order.rowSlug] ?? []
+  const dest0 = destinations[0]
   return {
     ...order,
+    companyName:     order.companyName     || dest0?.businessName    || order.companyName,
+    logoUrl:         order.logoUrl         || dest0?.logoUrl         || order.logoUrl,
+    googleReviewUrl: order.googleReviewUrl || dest0?.googleReviewUrl || order.googleReviewUrl,
+    destinations,
     status: statusMap[order.rowSlug]?.status ?? (order.orderedStand || order.orderedCard ? 'pending' : 'not_needed'),
     note:   statusMap[order.rowSlug]?.note   ?? null,
     designs: (designsMap[order.rowSlug] ?? []).map(d => ({
@@ -120,9 +135,19 @@ const hasOpenApproval = o => (o.designs || []).some(
   d => d.approval && !d.approval.superseded && !d.approval.response
 )
 
+// "This order still needs a logo." With destinations, that means ANY
+// destination missing one. Destination 0 may inherit the order-level logo (a
+// Formaloo submission's single upload belongs to the primary business); later
+// destinations cannot — order 1820 has Witsieshoek's logo on the order, but
+// Thaba Adventures' destination has none, and that gap is real work, not noise.
+// Without destinations it stays the old single-logo test.
+const missingLogo = o => o.destinations?.length
+  ? o.destinations.some((d, i) => !d.logoUrl && !(i === 0 && o.logoUrl))
+  : !o.logoUrl
+
 // We asked for a logo and it never arrived. request_sent_at is authoritative
 // and predates activity_log, so this stays correct for pre-10-Jul orders.
-const hasOpenLogoRequest = o => !o.logoUrl && !!o.logoRequestSentAt
+const hasOpenLogoRequest = o => missingLogo(o) && !!o.logoRequestSentAt
 
 function isAwaitingClient(order) {
   if (!orderedSomething(order)) return false
@@ -136,7 +161,7 @@ function matchesFilter(order, filter) {
   // ordered anything (orderedStand/orderedCard both false) and legitimately
   // have no logo; without this check they flooded the tab (found while
   // testing search: 132 "awaiting logo" results instead of the real ~30).
-  if (filter === 'awaiting_logo') return !order.logoUrl && orderedSomething(order)
+  if (filter === 'awaiting_logo') return missingLogo(order) && orderedSomething(order)
   // The ball is in the CLIENT's court: we asked for something and are waiting.
   // Deliberately excludes work we simply have not done or sent yet — that is
   // our own to-do (Awaiting Logo / Ready), not a chase.
@@ -182,7 +207,7 @@ router.get('/', async (req, res) => {
     const orders = needsFullScan ? sourceOrders : sourceOrders.slice((page - 1) * pageSize, page * pageSize)
     const count  = all.count
 
-    const [statuses, designsMap, names, approvalMap, manualRaw, shopifyMap, contactMap, overrideMap] = await Promise.all([
+    const [statuses, designsMap, names, approvalMap, manualRaw, shopifyMap, contactMap, overrideMap, destinationsMap] = await Promise.all([
       getAllOrderStatuses(), listDesignsByOwner(), getProfileNames(),
       approvalSummaryByDesign().catch(() => ({})),
       listManualOrders().catch(() => []),
@@ -194,9 +219,12 @@ router.get('/', async (req, res) => {
       // Fail-soft like the rest: if this read hiccups, the list still renders —
       // it just shows the customer's original wording for one load.
       getOrderOverrides().catch(err => { console.error('order overrides fetch error:', err.message); return {} }),
+      // Fail-soft: a destinations hiccup costs the destination children on the
+      // card, never the Orders tab itself.
+      listDestinationsBySlug().catch(err => { console.error('destinations fetch error:', err.message); return {} }),
     ])
     const statusMap = Object.fromEntries(statuses.map(s => [s.row_slug, s]))
-    const ctx = { statusMap, designsMap, names, approvalMap, shopifyMap, contactMap, overrideMap }
+    const ctx = { statusMap, designsMap, names, approvalMap, shopifyMap, contactMap, overrideMap, destinationsMap }
 
     const enriched = orders.map(order => enrichOrder(order, ctx))
       .filter(o => matchesFilter(o, filter)).filter(o => matchesSearch(o, search))
@@ -264,14 +292,18 @@ router.get('/missing-logo', async (req, res) => {
 
 router.get('/:rowSlug', async (req, res) => {
   try {
+    // Fail-soft, same as the list join: a destinations hiccup costs the
+    // children, never the order itself.
+    const destinations = await listDestinations(req.params.rowSlug)
+      .catch(err => { console.error('destinations fetch error:', err.message); return [] })
     const manual = await getManualOrder(req.params.rowSlug)
     if (manual) {
       const local = await getOrderStatus(req.params.rowSlug)
-      return res.json({ ...toOrderShape(manual), status: local?.status ?? 'pending', note: local?.note ?? null })
+      return res.json({ ...toOrderShape(manual), destinations, status: local?.status ?? 'pending', note: local?.note ?? null })
     }
     const order = await fetchOrder(req.params.rowSlug)
     const local = await getOrderStatus(req.params.rowSlug)
-    res.json({ ...order, status: local?.status ?? 'pending', note: local?.note ?? null })
+    res.json({ ...order, destinations, status: local?.status ?? 'pending', note: local?.note ?? null })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
