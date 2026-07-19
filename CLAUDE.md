@@ -1,7 +1,8 @@
 # ReviewTap Design Studio — Project Context
 
 Internal tool for ReviewTap staff to design print artwork (table stands, business cards)
-for clients who submit logos/details via a Formaloo form. Designers pick up orders,
+for clients who submit logos/details via the self-hosted `/setup/<orderNumber>` page
+(since 2026-07-19; the legacy Formaloo form stays reachable as rollback). Designers pick up orders,
 place the logo + a QR code on a fixed product canvas, export print-ready files, and
 mark the order done. QR codes are **dynamic** (redirect through our own backend so the
 destination can be changed without reprinting).
