@@ -535,8 +535,9 @@ server-rendered-public-page pattern as the approval flow (Feature F), reusing
 - Frontend: `lib/logoRequest.js` + `LogoRequestShareModal.jsx` (copy-link always; WhatsApp
   button only when a phone is known).
 - Two entry points in `OrdersPanel.jsx`: the missing-logo banner's "Request logo" button
-  creates the manual order on the fly (`company_name` defaults to `Order #<number>` — rename
-  later once the customer replies, since Shopify PII isn't available to prefill it) then
+  creates the manual order on the fly (`company_name` defaults to `Order #<number>` and there
+  is no phone/email, since Shopify PII isn't available to prefill it — **run Import CSV to fill
+  those in, which is what makes the one-click system send appear; see "Shopify CSV import"**) then
   requests a token in one motion; an order card with `isManual && !logoUrl` shows the same
   action once the order already exists, plus a direct WhatsApp icon-button (skips the share
   modal, opens `wa.me` immediately) when the order already has a phone/whatsapp on file.
