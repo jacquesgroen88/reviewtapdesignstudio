@@ -12,6 +12,7 @@ import {
 import { fetchOpenShopifyOrders } from '../services/shopify.js'
 import { listDestinationsBySlug, listDestinations } from '../services/destinations.js'
 import { logActivity, listActivityForOrder, getLastContactBySlug } from '../services/activityLog.js'
+import { buildPlan, applyPlan } from '../services/shopifyImport.js'
 import { orderLabel, bareOrderNumber } from '../lib/orderNumber.js'
 
 const router = express.Router()
@@ -361,6 +362,46 @@ router.delete('/:rowSlug/override', async (req, res) => {
     })
     res.status(204).end()
   } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── Shopify CSV import ────────────────────────────────────────────────────────
+
+// Fill customer details onto logo-less orders from a Shopify orders_export.csv.
+// The studio cannot read Shopify PII (see services/shopifyImport.js for why), and
+// an order with no phone number cannot use the one-click "Send via the Reviewtap
+// System" — which is what forces the hand-built GHL contact. This closes that gap.
+//
+// body: { rows: [...parsed CSV rows...], apply?: boolean }
+// Without `apply` it returns the PLAN only, so the UI can show exactly what will
+// change before anything is written. The plan is always re-derived server-side on
+// apply — never trust a client-sent plan, it may be stale or edited.
+router.post('/import-shopify', async (req, res) => {
+  try {
+    const { rows, apply } = req.body || {}
+    if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'rows required' })
+    if (rows.length > 2000) return res.status(400).json({ error: 'too many rows (max 2000)' })
+
+    const plan = await buildPlan(rows)
+    if (!apply) return res.json({ plan })
+
+    const applied = await applyPlan(plan, { createdBy: req.user?.id || null })
+    if (applied.updated.length || applied.created.length) {
+      logActivity({
+        ...actorFrom(req), action: 'orders.imported', targetType: 'order', targetId: 'shopify-csv',
+        targetLabel: `${applied.updated.length} filled, ${applied.created.length} created`,
+        metadata: {
+          updated: applied.updated.length,
+          created: applied.created.length,
+          failed: applied.failed.length,
+          orderNumbers: [...applied.updated, ...applied.created].map(o => o.orderNumber).slice(0, 50),
+        },
+      })
+    }
+    res.json({ plan, applied })
+  } catch (err) {
+    console.error('shopify import failed:', err.message)
     res.status(500).json({ error: err.message })
   }
 })

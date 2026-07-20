@@ -71,6 +71,9 @@ export const SENTENCES = {
 
   'order.follow_up_logged':    e => `logged a follow-up${e.metadata?.text ? `: "${e.metadata.text}"` : ''}`,
 
+  // Bulk fill of customer details from a Shopify CSV export.
+  'orders.imported':           e => `imported customer details from Shopify (${e.metadata?.updated || 0} filled${e.metadata?.created ? `, ${e.metadata.created} added` : ''})`,
+
   // Client details feed the WhatsApp greeting and the GHL contact name, so a
   // change to them is worth seeing in the history.
   'order.details_corrected':   e => `corrected the client details for ${e.targetLabel || 'an order'}${e.metadata?.fields?.length ? ` (${e.metadata.fields.map(f => FIELD_TEXT[f] || f).join(', ')})` : ''}`,

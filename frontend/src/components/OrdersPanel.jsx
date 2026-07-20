@@ -6,6 +6,7 @@ import { createLogoRequest } from '../lib/logoRequest.js'
 import ApprovalShareModal from './ApprovalShareModal.jsx'
 import LogoRequestShareModal from './LogoRequestShareModal.jsx'
 import ManualOrderModal from './ManualOrderModal.jsx'
+import ImportShopifyModal from './ImportShopifyModal.jsx'
 import OrderDetailsModal from './OrderDetailsModal.jsx'
 import OrderHistory, { LastContactLine } from './OrderHistory.jsx'
 import { logShare } from '../lib/shareLog.js'
@@ -61,6 +62,7 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
   const [searchTerm,  setSearchTerm]  = useState('')   // debounced, sent to backend
   const [manualModal, setManualModal] = useState(null)   // {mode:'new'} | {mode:'edit', order} | null
   const [detailsModal, setDetailsModal] = useState(null) // Formaloo order whose client details are being corrected
+  const [importModal, setImportModal] = useState(false)  // Shopify CSV customer-detail import
   const [missingLogo, setMissingLogo] = useState([])
   const [missingLogoOpen, setMissingLogoOpen] = useState(false)
   const [logoRequestResult, setLogoRequestResult] = useState(null)   // {result, companyName, hasPhone} → share modal
@@ -257,6 +259,13 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             New order
           </button>
+          {/* Shopify won't give us customer PII through the API, so the names and
+              numbers come in from the CSV export instead. Without a number an
+              order can't use the one-click Reviewtap System send. */}
+          <button onClick={() => setImportModal(true)} className="btn-secondary text-sm" title="Fill in customer names and WhatsApp numbers from a Shopify CSV export">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Import CSV
+          </button>
           <button onClick={() => load(true)} className="btn-ghost text-sm" disabled={loading}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
               className={loading ? 'animate-spin' : ''}>
@@ -272,6 +281,13 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
           initial={manualModal.order || null}
           onClose={() => setManualModal(null)}
           onSaved={() => { setManualModal(null); load(); refreshMissingLogo() }}
+        />
+      )}
+
+      {importModal && (
+        <ImportShopifyModal
+          onClose={() => setImportModal(false)}
+          onImported={() => { load(true); refreshMissingLogo() }}
         />
       )}
 

@@ -452,6 +452,39 @@ differently. Use `bareOrderNumber()` / `displayOrderNumber()` / `orderLabel()`.
 twins** (separate bundles, no shared import path) — keep them in step, same trap as the
 proxy-image allowlist.
 
+## Shopify CSV customer-detail import (added 2026-07-20)
+**The problem it solves:** the studio cannot read Shopify customer PII (`read_orders` only,
+and Dev-Dashboard apps can't request protected customer data — see the Shopify sync section).
+So orders created from the missing-logo banner land with a placeholder name (`Order #1837`)
+and **no phone**. `routes/logoRequests.js` gates auto-send on
+`ghlLogoConfigured() && !!whatsapp`, so with no number the share modal can only offer a
+copy-link — which is what forces someone to build the GHL contact by hand and type the
+template variables in. Diane hit exactly this on #1837 (two link-creations + two copies in
+35 seconds, caught in `activity_log`, 2026-07-20).
+
+**The fix:** `Import CSV` on the Orders tab takes Shopify's own `orders_export.csv` (which
+DOES carry name, phone and email) and fills the gaps. Then the existing one-click "Send via
+the Reviewtap System" works, and `sendLogoRequestViaGhl` upserts the GHL contact and fills
+`rt_logo_upload` + `order_number` itself — no manual GHL work at all.
+- `lib/shopifyCsv.js` — RFC4180 parser (quoted fields, embedded commas/newlines, doubled
+  quotes, BOM) + `parseShopifyOrders()`. **The export is ONE ROW PER LINE ITEM** and the
+  customer columns are only filled on an order's first row, so rows are grouped by `Name`
+  and each field read from whichever row actually carries it. Anything less gets it wrong.
+- `services/shopifyImport.js` — `buildPlan()` / `applyPlan()`.
+- `POST /api/orders/import-shopify` — no `apply` flag returns the PLAN only; the UI shows it
+  in full before anything is written. **The plan is always re-derived server-side on apply**,
+  never trusted from the client.
+- **Fill blanks, never clobber.** A value already in the studio may be a hand correction
+  (see Order overrides) and a re-import must never undo it. The ONE exception is the
+  `Order #1234` placeholder name, which exists to be replaced. Verified: re-running an
+  import is a no-op, and a CSV with different values does not overwrite existing ones.
+- Creates rows only for orders that need artwork (`/custom/i` on the line-item title, same
+  test `services/shopify.js` uses), are paid, not cancelled, and have no Formaloo submission
+  (else the Orders tab would show a duplicate — the same `#`-stripping trap as 2026-07-09).
+- Phones are normalised to `+27…` on import via `normalizePhone`.
+- **Exports go stale.** An export taken before an order existed obviously can't fill it —
+  the modal says to use a fresh one. The 17 Jul export stops at #1827 and cannot fix #1837.
+
 ## Environment variables (set in Netlify → Site settings → Env vars)
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY` (or `SUPABASE_SERVICE_KEY`)
 - `FORMALOO_API_KEY`, `FORMALOO_API_SECRET`, `FORMALOO_FORM_SLUG=CGQse2u9`, `FORMALOO_WORKSPACE=cHQuChHR`
