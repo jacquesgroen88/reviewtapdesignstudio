@@ -151,7 +151,13 @@ An order/job can have **many** designs (e.g. one stand with 10 different QR code
   QR swapped via `generateStyledQR` from `lib/qr.js`).
 - **Design Studio tab** = `DesignLibrary` listing all designs (open/duplicate/rename/delete).
 - **Order cards** list that order's designs (`order.designs`), each with an **Edit** that opens
-  it directly; a **New design** button routes to the picker scoped to the order.
+  it directly and a **Delete** (added 2026-07-23, for artwork that shouldn't be on the order at
+  all — e.g. a card design on an order that only bought stands, which the client then sees in
+  their approval preview); a **New design** button routes to the picker scoped to the order.
+- **Deleting a design supersedes any open approval containing it** (`DELETE /api/designs/:id`,
+  same call the artwork-changing PUT makes). `approvals.items` is a SNAPSHOT — without this the
+  deleted design stays visible on the link the client already holds, which is the exact bug the
+  delete button was added to fix. The confirm dialog says so when a live link exists.
 - Restore loads only `design.assets` (backgrounds/guides redrawn fresh) — see Gotcha #11.
 - Legacy `order_designs` table is kept as a backup; the migration backfilled `designs` from it.
 
