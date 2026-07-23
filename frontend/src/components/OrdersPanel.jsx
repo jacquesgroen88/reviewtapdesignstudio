@@ -226,6 +226,27 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
     } finally { setSendingApproval(null) }
   }
 
+  // Remove a design from an order (e.g. a card design on an order that only
+  // bought stands — it would otherwise appear in the client's approval preview).
+  // The backend also supersedes any open approval link containing it, so a link
+  // already with the client stops showing the deleted item.
+  async function deleteDesign(order, design) {
+    const warn = design.approval?.token && !design.approval.superseded
+      ? '\n\nThis design is on an approval link the client already has — that link will be marked outdated, so send a new one afterwards.'
+      : ''
+    if (!confirm(`Delete the design “${design.name}”?\n\nThis removes it from this order and from the design library.${warn}`)) return
+    try {
+      const res = await apiFetch(`/api/designs/${design.id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error(await res.text())
+      setOrders(prev => prev.map(o => o.rowSlug === order.rowSlug
+        ? { ...o, designs: (o.designs || []).filter(x => x.id !== design.id) }
+        : o))
+      setError(null)
+    } catch (err) {
+      setError(`Delete failed: ${err.message || 'network error'} — the design is still on this order`)
+    }
+  }
+
   async function deleteManualOrder(order) {
     if (!confirm(`Delete this manually-entered order for "${order.companyName}"? Any designs already made stay in the library.`)) return
     try {
@@ -420,6 +441,7 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
                   googleReviewUrl: dest.googleReviewUrl || order.googleReviewUrl,
                 })}
                 onOpenDesign={onOpenDesign}
+                onDeleteDesign={d => deleteDesign(order, d)}
                 onStatusChange={s => updateStatus(order, s)}
                 isUpdating={updating === order.rowSlug}
                 onSendApproval={() => sendApproval(order)}
@@ -471,7 +493,7 @@ function ApprovalChip({ approval }) {
   return <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full shrink-0 ${cls}`} title={title}>{text}</span>
 }
 
-function OrderCard({ order, onNewDesign, onNewDesignFor, onOpenDesign, onStatusChange, isUpdating, onSendApproval, isSendingApproval, onEditManual, onEditDetails, onDeleteManual, onRequestLogo, onRequestLogoWhatsapp, isRequestingLogo, onLogFollowUp }) {
+function OrderCard({ order, onNewDesign, onNewDesignFor, onOpenDesign, onDeleteDesign, onStatusChange, isUpdating, onSendApproval, isSendingApproval, onEditManual, onEditDetails, onDeleteManual, onRequestLogo, onRequestLogoWhatsapp, isRequestingLogo, onLogFollowUp }) {
   const [expanded, setExpanded] = useState(false)
   const status = STATUS_LABELS[order.status] ?? STATUS_LABELS.pending
   const canDesign = order.orderedStand || order.orderedCard
@@ -589,6 +611,15 @@ function OrderCard({ order, onNewDesign, onNewDesignFor, onOpenDesign, onStatusC
                 )}
                 <button onClick={() => onOpenDesign({ ...d, ownerName: order.companyName, logoUrl: order.logoUrl, googleReviewUrl: order.googleReviewUrl })}
                   className="shrink-0 text-xs font-medium text-brand-600 hover:text-brand-700">Edit</button>
+                {/* Delete: for designs that shouldn't be on this order at all
+                    (e.g. a card design where only stands were ordered — it would
+                    otherwise show up in the client's approval preview). */}
+                <button onClick={() => onDeleteDesign(d)} title="Delete this design"
+                  className="shrink-0 text-gray-300 hover:text-red-600">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                  </svg>
+                </button>
               </div>
               {/* Client's change request, shown inline (not just on hover) */}
               {d.approval?.response === 'changes' && d.approval?.comment && (

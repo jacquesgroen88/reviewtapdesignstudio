@@ -83,11 +83,19 @@ router.put('/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
 
+// Delete. Like a PUT that changes the artwork, this must supersede any open
+// approval link that still contains this design: `approvals.items` is a
+// SNAPSHOT (the version lock), so removing the design here does NOT remove it
+// from a link the client already holds — without this, deleting the card design
+// off an order still leaves the client previewing a card they never ordered.
 router.delete('/:id', async (req, res) => {
   try {
     const d = await getDesign(req.params.id)
     await deleteDesign(req.params.id)
-    if (d) logActivity({ ...actorFrom(req), action: 'design.deleted', targetType: 'design', targetId: req.params.id, targetLabel: d.name, metadata: ownerMeta(d.owner_slug) })
+    if (d) {
+      supersedeForDesigns([req.params.id]).catch(err => console.error('supersede failed:', err.message))
+      logActivity({ ...actorFrom(req), action: 'design.deleted', targetType: 'design', targetId: req.params.id, targetLabel: d.name, metadata: ownerMeta(d.owner_slug) })
+    }
     res.status(204).end()
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
