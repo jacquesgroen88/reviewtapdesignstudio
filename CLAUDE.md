@@ -207,6 +207,10 @@ button becomes **Edit** and the order stays fully reusable.
 4. **Supabase free tier PAUSES after ~7 days idle.** A paused DB breaks QR redirects. `keepalive.js`
    (scheduled `@daily`) pings it. For production QR reliability, also consider Supabase Pro ($25/mo)
    so it never pauses. See "Custom domain / reliability" below.
+   **Pausing is NOT the only way the DB takes QR codes down, and it was not the way it actually
+   happened.** On 2026-08-11 the project was `ACTIVE_HEALTHY` the entire time and still served
+   Cloudflare 522 on every request for ~2h, because a single app query exhausted its I/O. See
+   Gotcha #17.
 
 5. **Netlify function deps live in ROOT `package.json`.** With no `base` dir set, Netlify installs
    root deps which esbuild resolves for functions (they walk up to repo-root node_modules). The
@@ -304,6 +308,33 @@ button becomes **Edit** and the order stays fully reusable.
     data while building the Awaiting Client tab (King Chicken sat in `pending_approval` having
     never been contacted). The only honest "we actually asked" signal is an **approval record**
     that is not superseded and has no response (`hasOpenApproval` in `routes/orders.js`).
+
+17. **Never select `approvals.items` in bulk. It is not a "slow query" problem, it took the whole
+    database down and every printed QR code with it.** On 2026-08-11 `supersedeForDesigns()` was
+    still doing `.select('token, items')` across every open approval to match design ids in JS.
+    `items` carries the per-design canvas snapshot: **86 MB across 129 rows**, growing with every
+    approval sent. It ran on EVERY design save and delete. A designer iterating on one design was
+    enough: Postgres went to `statement timeout` and **190-second checkpoints** (normal is 0.1s),
+    then the whole project served Cloudflare **522** for about two hours. `/r/:code` returned 503
+    for every client in the field, and it surfaced only because someone could not log in.
+    - The performance note below already said "never widen this projection", but it was written
+      for `approvalSummaryByDesign` only. **The rule is the table, not the one function.**
+      `listChaseCandidates()` had the identical defect via `.select('*')` on the `@daily` chase
+      schedule and was fixed in the same commit (`3b08757`).
+    - Both now filter in Postgres: `supersede_approvals_for_designs()` and
+      `approvals_awaiting_response()`, plus index `approvals_items_gin` (jsonb_path_ops).
+    - **Only a single-operand `items @> $1` is index-servable.** A semi-join over
+      `unnest(p_design_ids)` and `@> ANY(ARRAY(...))` both plan as seq scans, which detoast every
+      snapshot: measured 292ms / 4859 buffers versus **0.077ms / 3 buffers** indexed. That is why
+      the function loops one indexed UPDATE per design id instead of doing the array in one go.
+    - **Don't make a mutating RPC `SECURITY DEFINER` by reflex.** These tables are RLS deny-all and
+      the backend uses the service key, which bypasses RLS anyway. `SECURITY DEFINER` here would
+      let anyone holding the anon key (baked into the public frontend bundle) supersede every live
+      client approval link.
+    - It also silently swallowed its own errors (`const { data } = ...` with no `error` check), so
+      a failure left stale approval links live in front of clients. It throws now. Gotcha #12 again.
+    - `items[].snapshot` is **81 MB of that 81 MB (100.0%) and is read by NO code** — the approval
+      page renders from `mockups`. See board `ab142supabasepro` before touching the approvals route.
 
 ---
 
@@ -656,11 +687,18 @@ Goal: a scanned QR must redirect fast and never time out.
   If on Cloudflare, keep the CNAME DNS-only (grey cloud) so Netlify manages SSL.
 - **The redirect is already hardened**: 5s DB timeout (fail fast, no hang), `Cache-Control: max-age=300`
   on the 302 (repeat scans are instant + survive brief DB hiccups), async scan counting.
-- **Biggest risk = Supabase pausing** (free tier). Mitigations in order of robustness:
-  1. `keepalive.js` daily ping (done) — prevents idle pause.
-  2. Upgrade to Supabase Pro so it never pauses (recommended before heavy print volume).
-  3. (Future) Move the slug→destination map to Netlify Blobs (always-on, no pause) or an edge
+- **Two ways the DB takes QR codes down. Pausing is the one we designed for; I/O exhaustion is
+  the one that actually happened** (2026-08-11, ~2h of 503s on every printed code, project
+  `ACTIVE_HEALTHY` throughout). Mitigations in order of robustness:
+  1. `keepalive.js` daily ping (done) — prevents idle pause. Does nothing for #2 below.
+  2. **Don't let the app issue queries that can starve the instance** (Gotcha #17). This is the
+     one that bit us, it is free to fix, and no amount of uptime budget substitutes for it.
+  3. Upgrade to Supabase Pro so it never pauses AND there is no I/O credit cliff (recommended
+     before heavy print volume; re-opened as board `ab142supabasepro` after the 11 Aug outage).
+  4. (Future) Move the slug→destination map to Netlify Blobs (always-on, no pause) or an edge
      KV store, and read it in a Netlify **Edge Function** for sub-50ms redirects with no cold DB.
+     This is the only option that keeps QR codes up when the DB is down at all, which is why it
+     stays on the list even though it is the most work.
 - Old QR host was QR-Me; we replaced it. Bulk-import old codes via QR Codes tab → Bulk import.
 
 ---
