@@ -58,17 +58,28 @@ export async function updateApprovalItems(token, items) {
   if (error) throw error
 }
 
-// A new send (or a design edit) invalidates older open links for those designs
+// A new send (or a design edit) invalidates older open links for those designs.
+//
+// Runs entirely in Postgres via supersede_approvals_for_designs(). This used to
+// `.select('token, items')` across every open approval and do the matching in JS,
+// which dragged the full canvas snapshots over the wire on EVERY design save and
+// delete: 86 MB across 129 rows as of 2026-08-11, and growing with each send.
+// That is what took the database down on 11 Aug (statement timeouts, 190s
+// checkpoints, every QR redirect 503 for ~2h) while Diane iterated on one design.
+//
+// Same rule as approvalSummaryByDesign below: never widen a projection on this
+// table to include items. Fetch the ONE approval you need by token (getApproval).
+//
+// Errors now throw rather than being swallowed. The old code destructured `data`
+// without checking `error`, so a failure here silently left stale links live.
 export async function supersedeForDesigns(designIds, { exceptToken } = {}) {
-  if (!designIds?.length) return
-  const { data } = await getClient().from('approvals')
-    .select('token, items').is('superseded_at', null)
-  const now = new Date().toISOString()
-  for (const a of data ?? []) {
-    if (exceptToken && a.token === exceptToken) continue
-    const hits = (a.items || []).some(i => designIds.includes(i.design_id))
-    if (hits) await getClient().from('approvals').update({ superseded_at: now }).eq('token', a.token)
-  }
+  if (!designIds?.length) return 0
+  const { data, error } = await getClient().rpc('supersede_approvals_for_designs', {
+    p_design_ids: designIds,
+    p_except_token: exceptToken ?? null,
+  })
+  if (error) throw error
+  return data ?? 0
 }
 
 // design_id → latest approval summary, for order-card chips.
@@ -102,16 +113,22 @@ export async function approvalSummaryByDesign() {
   return map
 }
 
-// For the scheduled reminder: open, unseen-or-unanswered, sent >48h ago, not reminded
+// For the scheduled reminder: open, unanswered, sent >48h ago, not reminded.
+//
+// Same defect as supersedeForDesigns had: `.select('*')` includes items, so this
+// pulled every matching approval's canvas snapshots into the function just to
+// test `.some(i => !i.response)`. It runs @daily (netlify/functions/approval-chase.js),
+// so it was a scheduled repeat of the query that caused the 11 Aug outage.
+//
+// approvals_awaiting_response() does the unanswered test in Postgres and returns
+// only the four columns approval-chase actually reads. Verified against live data
+// on 2026-08-11: 13 rows, identical set to the old JS filter.
 export async function listChaseCandidates() {
   const cutoff = new Date(Date.now() - 48 * 3600 * 1000).toISOString()
-  const { data, error } = await getClient().from('approvals')
-    .select('*')
-    .is('superseded_at', null)
-    .is('reminded_at', null)
-    .lt('sent_at', cutoff)
+  const { data, error } = await getClient()
+    .rpc('approvals_awaiting_response', { p_cutoff: cutoff })
   if (error) throw error
-  return (data ?? []).filter(a => (a.items || []).some(i => !i.response))
+  return data ?? []
 }
 
 export async function markReminded(token) {
