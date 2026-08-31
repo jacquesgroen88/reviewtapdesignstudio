@@ -161,7 +161,13 @@ export default function OrdersPanel({ onNewDesign, onOpenDesign }) {
     try {
       const qs = `filter=${filter}&page=${page}&pageSize=${PAGE_SIZE}&search=${encodeURIComponent(searchTerm)}${force ? '&refresh=1' : ''}`
       const res = await apiFetch(`/api/orders?${qs}`)
-      if (!res.ok) throw new Error(await res.text())
+      if (!res.ok) {
+        // Backend errors arrive as {"error": "..."} — show the message, not raw JSON
+        const body = await res.text()
+        let msg = body
+        try { msg = JSON.parse(body).error || body } catch { /* not JSON, show as-is */ }
+        throw new Error(msg)
+      }
       const data = await res.json()
       setOrders(data.orders)
       setTotal(data.count)

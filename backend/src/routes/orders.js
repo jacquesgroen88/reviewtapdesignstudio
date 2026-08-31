@@ -156,8 +156,12 @@ function isAwaitingClient(order) {
   return hasOpenApproval(order) || hasOpenLogoRequest(order)
 }
 
-function matchesFilter(order, filter) {
-  if (!filter || filter === 'all') return true
+function matchesFilter(order, filter, search) {
+  // The default view is a worklist, not an archive: done orders are hidden so
+  // open work is findable at a glance (Jacques, 2026-08-31). They stay on the
+  // Done tab — and a SEARCH still finds them, because hiding an order someone
+  // is explicitly searching for would read as the search being broken.
+  if (!filter || filter === 'all') return search ? true : order.status !== 'done'
   // Must ALSO have ordered a stand/card — plenty of Formaloo submissions never
   // ordered anything (orderedStand/orderedCard both false) and legitimately
   // have no logo; without this check they flooded the tab (found while
@@ -181,6 +185,16 @@ function byStalestContact(a, b) {
   return at - bt
 }
 
+// Newest submission first — the default browse order. Manual and Formaloo
+// orders sort as ONE timeline; before this, manual orders (which is what
+// /setup creates) rode along as a separate block, so a brand-new order could
+// render mid-page instead of at the top. Missing dates sort last.
+function bySubmittedDesc(a, b) {
+  const at = a.submittedAt ? new Date(a.submittedAt).getTime() : -Infinity
+  const bt = b.submittedAt ? new Date(b.submittedAt).getTime() : -Infinity
+  return bt - at
+}
+
 function matchesSearch(order, search) {
   if (!search) return true
   return (order.companyName || '').toLowerCase().includes(search) ||
@@ -201,12 +215,9 @@ router.get('/', async (req, res) => {
     const needsFullScan  = filter !== 'all' || !!search
     const onlyDesignNeeded = filter !== 'all'
     const all = await fetchAllOrders({ force: req.query.refresh === '1' })
-    const sourceOrders = onlyDesignNeeded
+    const orders = onlyDesignNeeded
       ? all.orders.filter(o => o.orderedStand || o.orderedCard)
       : all.orders
-    // 'all' still pages; a filter/search scans everything and pages on the result.
-    const orders = needsFullScan ? sourceOrders : sourceOrders.slice((page - 1) * pageSize, page * pageSize)
-    const count  = all.count
 
     const [statuses, designsMap, names, approvalMap, manualRaw, shopifyMap, contactMap, overrideMap, destinationsMap] = await Promise.all([
       getAllOrderStatuses(), listDesignsByOwner(), getProfileNames(),
@@ -227,29 +238,27 @@ router.get('/', async (req, res) => {
     const statusMap = Object.fromEntries(statuses.map(s => [s.row_slug, s]))
     const ctx = { statusMap, designsMap, names, approvalMap, shopifyMap, contactMap, overrideMap, destinationsMap }
 
+    // Enrich EVERYTHING before filtering or paging — it's all in-memory map
+    // joins, and both the done-hidden default view (status is enrichment) and
+    // the merged newest-first sort need the full enriched set. The old path
+    // sliced the Formaloo page first and stacked manual orders on top as a
+    // separate block, which is why a brand-new /setup order could land at the
+    // bottom of page 1 next to months-old rows.
     const enriched = orders.map(order => enrichOrder(order, ctx))
-      .filter(o => matchesFilter(o, filter)).filter(o => matchesSearch(o, search))
+    const manualResult = manualRaw.map(toOrderShape).map(o => enrichOrder(o, ctx))
 
-    // Manually-entered orders aren't part of Formaloo's server-side pagination
-    // (there are typically only a handful), so they're shown in full — on
-    // page 1 of a normal browse, and always when searching/filtering — rather
-    // than sliced into Formaloo's page windows.
-    let manualResult = manualRaw.map(toOrderShape).map(o => enrichOrder(o, ctx))
-      .filter(o => matchesFilter(o, filter)).filter(o => matchesSearch(o, search))
+    let result = [...manualResult, ...enriched]
+      .filter(o => matchesFilter(o, filter, search))
+      .filter(o => matchesSearch(o, search))
 
-    let result, total
-    if (needsFullScan) {
-      result = [...manualResult, ...enriched]
-      // Awaiting-client is a worklist, not a browse: order it by who is most
-      // overdue a nudge rather than by submission date.
-      if (filter === 'awaiting_client') result.sort(byStalestContact)
-      total = result.length
-    } else {
-      // Manual orders aren't part of the paged Formaloo set, so they ride along
-      // on page 1 rather than being sliced into its windows.
-      result = page === 1 ? [...manualResult, ...enriched] : enriched
-      total = count + manualResult.length
-    }
+    // Awaiting-client is a worklist, not a browse: order it by who is most
+    // overdue a nudge rather than by submission date.
+    if (filter === 'awaiting_client') result.sort(byStalestContact)
+    else result.sort(bySubmittedDesc)
+
+    const total = result.length
+    // 'all' pages; a filter/search returns the full scan result.
+    if (!needsFullScan) result = result.slice((page - 1) * pageSize, page * pageSize)
 
     res.json({ orders: result, count: total, page, pageSize })
   } catch (err) {

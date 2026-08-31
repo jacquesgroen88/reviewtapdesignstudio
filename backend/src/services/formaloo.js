@@ -30,27 +30,48 @@ export const FIELDS = {
 
 // Cached token
 let tokenCache = { value: null, expiresAt: 0 }
+let tokenMint  = null   // in-flight mint, shared so parallel page fetches don't each mint one
 
 async function getToken() {
   if (tokenCache.value && Date.now() < tokenCache.expiresAt) return tokenCache.value
 
   if (!APIKEY || !SECRET) throw new Error('FORMALOO_API_KEY / FORMALOO_API_SECRET not set')
 
-  const res = await axios.post(`${BASE}/oauth2/authorization-token/`,
-    'grant_type=client_credentials',
-    {
-      headers: {
-        'x-api-key':     APIKEY,
-        'Authorization': `Basic ${SECRET}`,
-        'Content-Type':  'application/x-www-form-urlencoded',
-      },
-    }
-  )
+  if (!tokenMint) {
+    tokenMint = axios.post(`${BASE}/oauth2/authorization-token/`,
+      'grant_type=client_credentials',
+      {
+        headers: {
+          'x-api-key':     APIKEY,
+          'Authorization': `Basic ${SECRET}`,
+          'Content-Type':  'application/x-www-form-urlencoded',
+        },
+      }
+    ).then(res => {
+      const token = res.data.authorization_token
+      // JWT expires in ~30 days; refresh 1 day early
+      tokenCache = { value: token, expiresAt: Date.now() + 29 * 24 * 60 * 60 * 1000 }
+      return token
+    }).finally(() => { tokenMint = null })
+  }
+  return tokenMint
+}
 
-  const token = res.data.authorization_token
-  // JWT expires in ~30 days; refresh 1 day early
-  tokenCache = { value: token, expiresAt: Date.now() + 29 * 24 * 60 * 60 * 1000 }
-  return token
+// A cached JWT can die long before its 30-day expiry — most likely when another
+// warm function container mints its own client-credentials token and Formaloo
+// invalidates ours. Before this, such a container served every Orders load a
+// "Request failed with status code 401" until it happened to be recycled, which
+// is exactly the intermittent refresh-until-it-works error seen in the UI.
+// On a 401: drop the cached token, mint a fresh one, retry ONCE.
+async function formalooGet(url, params) {
+  const attempt = async () => axios.get(url, { headers: headers(await getToken()), params })
+  try {
+    return await attempt()
+  } catch (err) {
+    if (err.response?.status !== 401) throw err
+    tokenCache = { value: null, expiresAt: 0 }
+    return attempt()
+  }
 }
 
 function headers(jwt) {
@@ -91,11 +112,9 @@ const TTL  = 5 * 60 * 1000   // matches shopify.js's ordersCache; Refresh forces
 
 let cache = { orders: null, count: 0, expiresAt: 0 }
 
-async function fetchPage(jwt, page) {
-  const res = await axios.get(`${BASE}/forms/${FORM}/rows/`, {
-    headers: headers(jwt),
-    params: { page, page_size: PAGE, ordering: '-created_at' },
-  })
+async function fetchPage(page) {
+  const res = await formalooGet(`${BASE}/forms/${FORM}/rows/`,
+    { page, page_size: PAGE, ordering: '-created_at' })
   return { rows: res.data?.data?.rows ?? [], count: res.data?.data?.count ?? 0 }
 }
 
@@ -103,15 +122,14 @@ async function fetchPage(jwt, page) {
 export async function fetchAllOrders({ force = false } = {}) {
   if (!force && cache.orders && Date.now() < cache.expiresAt) return cache
 
-  const jwt = await getToken()
-  const first = await fetchPage(jwt, 1)
+  const first = await fetchPage(1)
   const pages = Math.ceil(first.count / PAGE)
 
   // Pages 2..N concurrently. At ~400 rows that's 7 requests; it grows linearly
   // with the form, so if this ever gets big enough to bother Formaloo, that's
   // the signal to sync into Supabase rather than to quietly cap it here.
   const rest = pages > 1
-    ? await Promise.all(Array.from({ length: pages - 1 }, (_, i) => fetchPage(jwt, i + 2)))
+    ? await Promise.all(Array.from({ length: pages - 1 }, (_, i) => fetchPage(i + 2)))
     : []
 
   const rows = [...first.rows, ...rest.flatMap(r => r.rows)]
@@ -139,8 +157,7 @@ export async function fetchOrders({ page = 1, pageSize = PAGE, onlyDesignNeeded 
 export function bustOrdersCache() { cache = { orders: null, count: 0, expiresAt: 0 } }
 
 export async function fetchOrder(rowSlug) {
-  const jwt = await getToken()
-  const res = await axios.get(`${BASE}/rows/${rowSlug}/`, { headers: headers(jwt) })
+  const res = await formalooGet(`${BASE}/rows/${rowSlug}/`)
   return normaliseRow(res.data?.data?.row ?? {})
 }
 
